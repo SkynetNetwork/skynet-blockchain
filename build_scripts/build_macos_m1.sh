@@ -1,6 +1,22 @@
 #!/bin/bash
+# Execute this script from project root folder.
+echo "Clear all..."
+rm -rf ./build_scripts/build
+rm -rf ./build_scripts/dist
+rm -rf ./build_scripts/final_installer
+rm -rf ./skynet-blockchain-gui/build
+rm -rf ./skynet-blockchain-gui/daemon
+# rm -rf ./skynet-blockchain-gui/node_modules
+rm -rf ./skynet-blockchain-gui/Skynet-darwin-x64
+echo "...OK"
+
+. ./activate
+python -m pip install --upgrade pip
 
 set -euo pipefail
+
+pip install wheel pep517
+cd build_scripts
 
 pip install setuptools_scm
 # The environment variable SKYNET_INSTALLER_VERSION needs to be defined.
