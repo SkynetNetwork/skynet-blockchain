@@ -1821,7 +1821,7 @@ class TestGeneratorConditions:
             assert c.conditions == [
                 (
                     opcode.value,
-                    [ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([10])])],
+                    [ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([10]), b""])],
                 )
             ]
 
@@ -1835,11 +1835,11 @@ class TestGeneratorConditions:
         assert len(npc_result.npc_list) == 1
         opcode = ConditionOpcode.CREATE_COIN
         assert (
-            ConditionWithArgs(opcode, [puzzle_hash_1.encode("ascii"), bytes([5])])
+            ConditionWithArgs(opcode, [puzzle_hash_1.encode("ascii"), bytes([5]), b""])
             in npc_result.npc_list[0].conditions[0][1]
         )
         assert (
-            ConditionWithArgs(opcode, [puzzle_hash_2.encode("ascii"), bytes([5])])
+            ConditionWithArgs(opcode, [puzzle_hash_2.encode("ascii"), bytes([5]), b""])
             in npc_result.npc_list[0].conditions[0][1]
         )
 
@@ -1852,11 +1852,11 @@ class TestGeneratorConditions:
         assert len(npc_result.npc_list) == 1
         opcode = ConditionOpcode.CREATE_COIN
         assert (
-            ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([5])])
+            ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([5]), b""])
             in npc_result.npc_list[0].conditions[0][1]
         )
         assert (
-            ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([4])])
+            ConditionWithArgs(opcode, [puzzle_hash.encode("ascii"), bytes([4]), b""])
             in npc_result.npc_list[0].conditions[0][1]
         )
 
@@ -1864,7 +1864,7 @@ class TestGeneratorConditions:
         # CREATE_COIN
         puzzle_hash_1 = "abababababababababababababababab"
         hint = "12341234123412341234213421341234"
-        npc_result = generator_condition_tester(f'(51 "{puzzle_hash_1}" 5 "{hint}")')
+        npc_result = generator_condition_tester(f'(51 "{puzzle_hash_1}" 5 ("{hint}"))')
         assert npc_result.error is None
         assert len(npc_result.npc_list) == 1
         opcode = ConditionOpcode.CREATE_COIN
