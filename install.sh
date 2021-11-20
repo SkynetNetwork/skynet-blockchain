@@ -111,6 +111,8 @@ fi
 
 # shellcheck disable=SC1091
 . ./activate
+# set pip timeout = 100
+export PIP_DEFAULT_TIMEOUT=100
 # pip 20.x+ supports Linux binary wheels
 python -m pip install --upgrade pip
 python -m pip install wheel
