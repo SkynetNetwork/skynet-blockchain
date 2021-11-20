@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project does not yet adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for setuptools_scm/PEP 440 reasons.
 
+## 1.0.1 skynet-blockchain 2021-11-20
+
+### Added
+
+- Added support for the CAT1 Standard
+- Added RPI4_64bit GUI installation script
+- Added keyring support
+
+### Changed
+
+- Change fullnode related from wallet protocol
+- Change type decorators
+- CoinStore benchmark and performance improvements
+- Improve log formatting
+- Update clvm_rs version and add hint test
+
+### Fixed
+
+- Fix mypy issues on python 3.9.7
+- Fix outdated messages in CLI
+- Fix edge case with negative input
+- Update Gui bugs
+
 ## 1.0.0 skynet-blockchain 2021-10-29
 
 ### Added
