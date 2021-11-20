@@ -15,6 +15,8 @@ python -m pip install --upgrade pip
 pip install wheel pep517
 cd build_scripts
 
+set -euo pipefail
+
 pip install setuptools_scm
 # The environment variable SKYNET_INSTALLER_VERSION needs to be defined.
 # If the env variable NOTARIZE and the username and password variables are

@@ -2007,7 +2007,7 @@ class TestMaliciousGenerators:
                 [ConditionWithArgs(opcode, [int_to_bytes(28)])],
             )
         ]
-        assert run_time < 1
+        assert run_time < 1.5
         print(f"run time:{run_time}")
 
     @pytest.mark.parametrize(
@@ -2032,7 +2032,7 @@ class TestMaliciousGenerators:
                 [ConditionWithArgs(opcode, [bytes([100])])],
             )
         ]
-        assert run_time < 2
+        assert run_time < 2.5
         print(f"run time:{run_time}")
 
     @pytest.mark.parametrize(
@@ -2131,7 +2131,7 @@ class TestMaliciousGenerators:
         # amount
         assert npc_result.error == Err.RESERVE_FEE_CONDITION_FAILED.value
         assert len(npc_result.npc_list) == 0
-        assert run_time < 1
+        assert run_time < 1.5
         print(f"run time:{run_time}")
 
     @pytest.mark.parametrize(
@@ -2147,7 +2147,7 @@ class TestMaliciousGenerators:
         # coin announcements are not propagated to python, but validated in rust
         assert len(npc_result.npc_list[0].conditions) == 0
         # TODO: optimize clvm to make this run in < 1 second
-        assert run_time < 13
+        assert run_time < 13.5
         print(f"run time:{run_time}")
 
     def test_create_coin_duplicates(self):
