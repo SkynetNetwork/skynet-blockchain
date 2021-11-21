@@ -27,7 +27,7 @@ for setuptools_scm/PEP 440 reasons.
 - Fix mypy issues on python 3.9.7
 - Fix outdated messages in CLI
 - Fix edge case with negative input
-- Update Gui bugs
+- Fix Gui bugs
 
 ## 1.0.0 skynet-blockchain 2021-10-29
 
