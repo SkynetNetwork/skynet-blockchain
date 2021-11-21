@@ -72,6 +72,8 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
+set +u
+
 if [ "$NOTARIZE" ]; then
   electron-osx-sign Skynet-darwin-x64/Skynet.app --platform=darwin \
   --hardened-runtime=true --provisioning-profile=skynetblockchain.provisionprofile \
