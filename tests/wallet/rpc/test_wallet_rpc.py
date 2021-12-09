@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward, calculate_base_timelord_fee
+from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward
 from skynet.rpc.full_node_rpc_api import FullNodeRpcApi
 from skynet.rpc.full_node_rpc_client import FullNodeRpcClient
 from skynet.rpc.rpc_server import start_rpc_server
@@ -20,6 +20,7 @@ from skynet.util.ints import uint16, uint32
 from skynet.wallet.transaction_record import TransactionRecord
 from tests.setup_nodes import bt, setup_simulators_and_wallets, self_hostname
 from tests.time_out_assert import time_out_assert
+from tests.util.rpc import validate_get_routes
 
 log = logging.getLogger(__name__)
 
@@ -51,11 +52,11 @@ class TestWalletRpc:
             await full_node_api.farm_new_transaction_block(FarmNewBlockProtocol(ph))
 
         initial_funds = sum(
-            [calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i)) + calculate_base_timelord_fee(uint32(i)) for i in range(1, num_blocks)]
+            [calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i)) for i in range(1, num_blocks)]
         )
         initial_funds_eventually = sum(
             [
-                calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i)) + calculate_base_timelord_fee(uint32(i))
+                calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i))
                 for i in range(1, num_blocks + 1)
             ]
         )
@@ -96,6 +97,7 @@ class TestWalletRpc:
         await time_out_assert(5, wallet.get_unconfirmed_balance, initial_funds)
 
         client = await WalletRpcClient.create(self_hostname, test_rpc_port, bt.root_path, config)
+        await validate_get_routes(client, wallet_rpc_api)
         client_node = await FullNodeRpcClient.create(self_hostname, test_rpc_port_node, bt.root_path, config)
         try:
             addr = encode_puzzle_hash(await wallet_node_2.wallet_state_manager.main_wallet.get_new_puzzlehash(), "xnt")
@@ -244,17 +246,19 @@ class TestWalletRpc:
             await client.log_in_and_skip(pks[1])
             sk_dict = await client.get_private_key(pks[1])
             assert sk_dict["fingerprint"] == pks[1]
+            fingerprint = await client.get_logged_in_fingerprint()
+            assert fingerprint == pks[1]
 
             # Add in reward addresses into farmer and pool for testing delete key checks
             # set farmer to first private key
             sk = await wallet_node.get_key_for_fingerprint(pks[0])
             test_ph = create_puzzlehash_for_pk(master_sk_to_wallet_sk(sk, uint32(0)).get_g1())
             test_config = load_config(wallet_node.root_path, "config.yaml")
-            test_config["farmer"]["xnt_target_address"] = encode_puzzle_hash(test_ph, "xnt")
+            test_config["farmer"]["xnt_target_address"] = encode_puzzle_hash(test_ph, "txnt")
             # set pool to second private key
             sk = await wallet_node.get_key_for_fingerprint(pks[1])
             test_ph = create_puzzlehash_for_pk(master_sk_to_wallet_sk(sk, uint32(0)).get_g1())
-            test_config["pool"]["xnt_target_address"] = encode_puzzle_hash(test_ph, "xnt")
+            test_config["pool"]["xnt_target_address"] = encode_puzzle_hash(test_ph, "txnt")
             save_config(wallet_node.root_path, "config.yaml", test_config)
 
             # Check first key

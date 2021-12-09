@@ -1,7 +1,7 @@
 from typing import KeysView, Generator
 
 SERVICES_FOR_GROUP = {
-    "all": "skynet_harvester skynet_timelord_launcher skynet_timelord skynet_farmer skynet_full_node skynet_wallet".split(),
+    "all": ("skynet_harvester skynet_timelord_launcher skynet_timelord " "skynet_farmer skynet_full_node skynet_wallet").split(),
     "node": "skynet_full_node".split(),
     "harvester": "skynet_harvester".split(),
     "farmer": "skynet_harvester skynet_farmer skynet_full_node skynet_wallet".split(),

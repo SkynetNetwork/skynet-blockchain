@@ -36,12 +36,12 @@ def make_semver(version_str):
 
     local = v.local
 
-    version = "{0}.{1}.{2}".format(major, minor, patch -1)
+    version = "{0}.{1}.{2}".format(major, minor, patch)
 
-    # if prerelease:
-    #     version += "-{0}".format(prerelease)
-    # if local:
-    #     version += "+{0}".format(local)
+    if prerelease:
+        version += "-{0}".format(prerelease)
+    if local:
+        version += "+{0}".format(local)
 
     return version
 

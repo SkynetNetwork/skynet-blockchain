@@ -14,9 +14,15 @@ from skynet.cmds.start import start_cmd
 from skynet.cmds.stop import stop_cmd
 from skynet.cmds.wallet import wallet_cmd
 from skynet.cmds.plotnft import plotnft_cmd
+from skynet.cmds.plotters import plotters_cmd
 from skynet.util.default_root import DEFAULT_KEYS_ROOT_PATH, DEFAULT_ROOT_PATH
-from skynet.util.keychain import set_keys_root_path, supports_keyring_passphrase
-from skynet.util.ssl import check_ssl
+from skynet.util.keychain import (
+    Keychain,
+    KeyringCurrentPassphraseIsInvalid,
+    set_keys_root_path,
+    supports_keyring_passphrase,
+)
+from skynet.util.ssl_check import check_ssl
 from typing import Optional
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -35,7 +41,7 @@ def monkey_patch_click() -> None:
 
     import click.core
 
-    click.core._verify_python3_env = lambda *args, **kwargs: 0  # type: ignore
+    click.core._verify_python3_env = lambda *args, **kwargs: 0  # type: ignore[attr-defined]
 
 
 @click.group(
@@ -66,10 +72,21 @@ def cli(
         set_keys_root_path(Path(keys_root_path))
 
     if passphrase_file is not None:
-        from .passphrase_funcs import cache_passphrase, read_passphrase_from_file
+        from skynet.cmds.passphrase_funcs import cache_passphrase, read_passphrase_from_file
+        from sys import exit
 
         try:
-            cache_passphrase(read_passphrase_from_file(passphrase_file))
+            passphrase = read_passphrase_from_file(passphrase_file)
+            if Keychain.master_passphrase_is_valid(passphrase):
+                cache_passphrase(passphrase)
+            else:
+                raise KeyringCurrentPassphraseIsInvalid("Invalid passphrase")
+        except KeyringCurrentPassphraseIsInvalid:
+            if Path(passphrase_file.name).is_file():
+                print(f'Invalid passphrase found in "{passphrase_file.name}"')
+            else:
+                print("Invalid passphrase")
+            exit(1)
         except Exception as e:
             print(f"Failed to read passphrase: {e}")
 
@@ -103,7 +120,6 @@ def run_daemon_cmd(ctx: click.Context, wait_for_unlock: bool) -> None:
     from skynet.util.keychain import Keychain
 
     wait_for_unlock = wait_for_unlock and Keychain.is_keyring_locked()
-    import asyncio
 
     asyncio.get_event_loop().run_until_complete(async_run_daemon(ctx.obj["root_path"], wait_for_unlock=wait_for_unlock))
 
@@ -119,6 +135,7 @@ cli.add_command(start_cmd)
 cli.add_command(stop_cmd)
 cli.add_command(netspace_cmd)
 cli.add_command(farm_cmd)
+cli.add_command(plotters_cmd)
 
 if supports_keyring_passphrase():
     cli.add_command(passphrase_cmd)

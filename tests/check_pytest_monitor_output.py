@@ -9,8 +9,7 @@ for ln in sys.stdin:
     line = ln.strip().split()
 
     print(f"{float(line[1]) * 100.0: 8.1f}% CPU {float(line[2]):7.1f}s {float(line[3]): 8.2f} MB RAM  {line[0]}")
-    if float(line[3]) > 800:
-        limit = 800
+    limit = 800
 
     # until this can be optimized, use higher limits
     if "test_duplicate_coin_announces" in line[0]:

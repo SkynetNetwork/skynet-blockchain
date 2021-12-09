@@ -6,15 +6,3 @@
 	path = mozilla-ca
 	url = https://github.com/SkynetNetwork/mozilla-ca.git
         branch = main
-[submodule "skynetbip158"]
-	path = skynetbip158
-	url = https://github.com/SkynetNetwork/skynetbip158.git
-        branch = main
-[submodule "skynetvdf"]
-	path = skynetvdf
-	url = https://github.com/SkynetNetwork/skynetvdf.git
-        branch = main
-[submodule "skynetpos"]
-	path = skynetpos
-	url = https://github.com/SkynetNetwork/skynetpos.git
-        branch = main

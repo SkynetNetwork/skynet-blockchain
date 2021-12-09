@@ -1,15 +1,12 @@
 import asyncio
 import logging
-from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
-import aiosqlite
 import pytest
-import tempfile
 
-from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward, calculate_base_timelord_fee
+from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward
 from skynet.consensus.blockchain import Blockchain, ReceiveBlockResult
-from skynet.consensus.coinbase import create_farmer_coin, create_pool_coin, create_timelord_coin
+from skynet.consensus.coinbase import create_farmer_coin, create_pool_coin
 from skynet.full_node.block_store import BlockStore
 from skynet.full_node.coin_store import CoinStore
 from skynet.full_node.hint_store import HintStore
@@ -21,9 +18,9 @@ from skynet.types.generator_types import BlockGenerator
 from skynet.util.generator_tools import tx_removals_and_additions
 from skynet.util.ints import uint64, uint32
 from tests.wallet_tools import WalletTool
-from skynet.util.db_wrapper import DBWrapper
 from tests.setup_nodes import bt, test_constants
 from skynet.types.blockchain_format.sized_bytes import bytes32
+from tests.util.db_connection import DBConnection
 
 
 @pytest.fixture(scope="module")
@@ -39,16 +36,12 @@ WALLET_A = WalletTool(constants)
 log = logging.getLogger(__name__)
 
 
-def get_future_reward_coins(block: FullBlock) -> Tuple[Coin, Coin, Coin]:
-    timelord_amount = calculate_base_timelord_fee(block.height)
+def get_future_reward_coins(block: FullBlock) -> Tuple[Coin, Coin]:
     pool_amount = calculate_pool_reward(block.height)
     farmer_amount = calculate_base_farmer_reward(block.height)
     if block.is_transaction_block():
         assert block.transactions_info is not None
         farmer_amount = uint64(farmer_amount + block.transactions_info.fees)
-    timelord_coin: Coin = create_timelord_coin(
-        block.height, block.foliage.foliage_block_data.timelord_reward_puzzle_hash, timelord_amount, constants.GENESIS_CHALLENGE
-    )
     pool_coin: Coin = create_pool_coin(
         block.height, block.foliage.foliage_block_data.pool_target.puzzle_hash, pool_amount, constants.GENESIS_CHALLENGE
     )
@@ -58,26 +51,14 @@ def get_future_reward_coins(block: FullBlock) -> Tuple[Coin, Coin, Coin]:
         farmer_amount,
         constants.GENESIS_CHALLENGE,
     )
-    return pool_coin, farmer_coin, timelord_coin
-
-
-class DBConnection:
-    async def __aenter__(self) -> DBWrapper:
-        self.db_path = Path(tempfile.NamedTemporaryFile().name)
-        if self.db_path.exists():
-            self.db_path.unlink()
-        self.connection = await aiosqlite.connect(self.db_path)
-        return DBWrapper(self.connection)
-
-    async def __aexit__(self, exc_t, exc_v, exc_tb):
-        await self.connection.close()
-        self.db_path.unlink()
+    return pool_coin, farmer_coin
 
 
 class TestCoinStoreWithBlocks:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cache_size", [0])
-    async def test_basic_coin_store(self, cache_size: uint32):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_basic_coin_store(self, cache_size: uint32, db_version):
         wallet_a = WALLET_A
         reward_ph = wallet_a.get_new_puzzlehash()
 
@@ -100,7 +81,7 @@ class TestCoinStoreWithBlocks:
             uint64(1000), wallet_a.get_new_puzzlehash(), coins_to_spend[0]
         )
 
-        async with DBConnection() as db_wrapper:
+        async with DBConnection(db_version) as db_wrapper:
             coin_store = await CoinStore.create(db_wrapper, cache_size=cache_size)
 
             blocks = bt.get_consecutive_blocks(
@@ -115,10 +96,9 @@ class TestCoinStoreWithBlocks:
             should_be_included_prev: Set[Coin] = set()
             should_be_included: Set[Coin] = set()
             for block in blocks:
-                farmer_coin, pool_coin, timelord_coin = get_future_reward_coins(block)
+                farmer_coin, pool_coin = get_future_reward_coins(block)
                 should_be_included.add(farmer_coin)
                 should_be_included.add(pool_coin)
-                should_be_included.add(timelord_coin)
                 if block.is_transaction_block():
                     if block.transactions_generator is not None:
                         block_gen: BlockGenerator = BlockGenerator(block.transactions_generator, [])
@@ -175,10 +155,11 @@ class TestCoinStoreWithBlocks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cache_size", [0, 10, 100000])
-    async def test_set_spent(self, cache_size: uint32):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_set_spent(self, cache_size: uint32, db_version):
         blocks = bt.get_consecutive_blocks(9, [])
 
-        async with DBConnection() as db_wrapper:
+        async with DBConnection(db_version) as db_wrapper:
             coin_store = await CoinStore.create(db_wrapper, cache_size=cache_size)
 
             # Save/get block
@@ -209,10 +190,11 @@ class TestCoinStoreWithBlocks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cache_size", [0, 10, 100000])
-    async def test_rollback(self, cache_size: uint32):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_rollback(self, cache_size: uint32, db_version):
         blocks = bt.get_consecutive_blocks(20)
 
-        async with DBConnection() as db_wrapper:
+        async with DBConnection(db_version) as db_wrapper:
             coin_store = await CoinStore.create(db_wrapper, cache_size=uint32(cache_size))
 
             records: List[CoinRecord] = []
@@ -261,16 +243,17 @@ class TestCoinStoreWithBlocks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cache_size", [0, 10, 100000])
-    async def test_basic_reorg(self, cache_size: uint32):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_basic_reorg(self, cache_size: uint32, tmp_dir, db_version):
 
-        async with DBConnection() as db_wrapper:
+        async with DBConnection(db_version) as db_wrapper:
             initial_block_count = 30
             reorg_length = 15
             blocks = bt.get_consecutive_blocks(initial_block_count)
             coin_store = await CoinStore.create(db_wrapper, cache_size=uint32(cache_size))
             store = await BlockStore.create(db_wrapper)
             hint_store = await HintStore.create(db_wrapper)
-            b: Blockchain = await Blockchain.create(coin_store, store, test_constants, hint_store)
+            b: Blockchain = await Blockchain.create(coin_store, store, test_constants, hint_store, tmp_dir)
             try:
 
                 records: List[Optional[CoinRecord]] = []
@@ -321,21 +304,27 @@ class TestCoinStoreWithBlocks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cache_size", [0, 10, 100000])
-    async def test_get_puzzle_hash(self, cache_size: uint32):
-        async with DBConnection() as db_wrapper:
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_get_puzzle_hash(self, cache_size: uint32, tmp_dir, db_version):
+        async with DBConnection(db_version) as db_wrapper:
             num_blocks = 20
             farmer_ph = 32 * b"0"
             pool_ph = 32 * b"1"
+            # TODO: address hint error and remove ignore
+            #       error: Argument "farmer_reward_puzzle_hash" to "get_consecutive_blocks" of "BlockTools" has
+            #       incompatible type "bytes"; expected "Optional[bytes32]"  [arg-type]
+            #       error: Argument "pool_reward_puzzle_hash" to "get_consecutive_blocks" of "BlockTools" has
+            #       incompatible type "bytes"; expected "Optional[bytes32]"  [arg-type]
             blocks = bt.get_consecutive_blocks(
                 num_blocks,
-                farmer_reward_puzzle_hash=farmer_ph,
-                pool_reward_puzzle_hash=pool_ph,
+                farmer_reward_puzzle_hash=farmer_ph,  # type: ignore[arg-type]
+                pool_reward_puzzle_hash=pool_ph,  # type: ignore[arg-type]
                 guarantee_transaction_block=True,
             )
             coin_store = await CoinStore.create(db_wrapper, cache_size=uint32(cache_size))
             store = await BlockStore.create(db_wrapper)
             hint_store = await HintStore.create(db_wrapper)
-            b: Blockchain = await Blockchain.create(coin_store, store, test_constants, hint_store)
+            b: Blockchain = await Blockchain.create(coin_store, store, test_constants, hint_store, tmp_dir)
             for block in blocks:
                 res, err, _, _ = await b.receive_block(block)
                 assert err is None

@@ -1,14 +1,12 @@
 import asyncio
 import json
 import logging
-import socket
 import time
 import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from blspy import PrivateKey
-
 from skynet.consensus.block_record import BlockRecord
 from skynet.consensus.blockchain_interface import BlockchainInterface
 from skynet.consensus.constants import ConsensusConstants
@@ -37,6 +35,7 @@ from skynet.protocols.wallet_protocol import (
 )
 from skynet.server.node_discovery import WalletPeers
 from skynet.server.outbound_message import Message, NodeType, make_msg
+from skynet.server.peer_store_resolver import PeerStoreResolver
 from skynet.server.server import SkynetServer
 from skynet.server.ws_connection import WSSkynetConnection
 from skynet.types.blockchain_format.coin import Coin, hash_coin_list
@@ -47,11 +46,13 @@ from skynet.types.mempool_inclusion_status import MempoolInclusionStatus
 from skynet.types.peer_info import PeerInfo
 from skynet.util.byte_types import hexstr_to_bytes
 from skynet.util.check_fork_next_block import check_fork_next_block
+from skynet.util.config import WALLET_PEERS_PATH_KEY_DEPRECATED, load_config
 from skynet.util.errors import Err, ValidationError
 from skynet.util.ints import uint32, uint128
 from skynet.util.keychain import Keychain
 from skynet.util.lru_cache import LRUCache
 from skynet.util.merkle_set import MerkleSet, confirm_included_already_hashed, confirm_not_included_already_hashed
+from skynet.util.network import get_host_addr
 from skynet.util.path import mkdir, path_from_root
 from skynet.wallet.block_record import HeaderBlockRecord
 from skynet.wallet.derivation_record import DerivationRecord
@@ -102,6 +103,7 @@ class WalletNode:
         self.keychain_proxy = None
         self.local_keychain = local_keychain
         self.root_path = root_path
+        self.base_config = load_config(root_path, "config.yaml")
         self.log = logging.getLogger(name if name else __name__)
         # Normal operation data
         self.cached_blocks: Dict = {}
@@ -237,7 +239,10 @@ class WalletNode:
         self.peer_task = asyncio.create_task(self._periodically_check_full_node())
         self.sync_event = asyncio.Event()
         self.sync_task = asyncio.create_task(self.sync_job())
-        self.logged_in_fingerprint = fingerprint
+        if fingerprint is None:
+            self.logged_in_fingerprint = private_key.get_g1().get_fingerprint()
+        else:
+            self.logged_in_fingerprint = fingerprint
         self.logged_in = True
         return True
 
@@ -342,7 +347,7 @@ class WalletNode:
             already_sent = set()
             for peer, status, _ in record.sent_to:
                 if status == MempoolInclusionStatus.SUCCESS.value:
-                    already_sent.add(hexstr_to_bytes(peer))
+                    already_sent.add(bytes32.from_hexstr(peer))
             messages.append((msg, already_sent))
 
         return messages
@@ -350,16 +355,23 @@ class WalletNode:
     def set_server(self, server: SkynetServer):
         self.server = server
         DNS_SERVERS_EMPTY: list = []
+        network_name: str = self.config["selected_network"]
         # TODO: Perhaps use a different set of DNS seeders for wallets, to split the traffic.
         self.wallet_peers = WalletPeers(
             self.server,
-            self.root_path,
             self.config["target_peer_count"],
-            self.config["wallet_peers_path"],
+            PeerStoreResolver(
+                self.root_path,
+                self.config,
+                selected_network=network_name,
+                peers_file_path_key="wallet_peers_file_path",
+                legacy_peer_db_path_key=WALLET_PEERS_PATH_KEY_DEPRECATED,
+                default_peers_file_path="wallet/db/wallet_peers.dat",
+            ),
             self.config["introducer_peer"],
             DNS_SERVERS_EMPTY,
             self.config["peer_connect_interval"],
-            self.config["selected_network"],
+            network_name,
             None,
             self.log,
         )
@@ -396,7 +408,14 @@ class WalletNode:
                 self.config["full_node_peer"]["port"],
             )
             peers = [c.get_peer_info() for c in self.server.get_full_node_connections()]
-            full_node_resolved = PeerInfo(socket.gethostbyname(full_node_peer.host), full_node_peer.port)
+            # If full_node_peer is already an address, use it, otherwise
+            # resolve it here.
+            if full_node_peer.is_valid():
+                full_node_resolved = full_node_peer
+            else:
+                full_node_resolved = PeerInfo(
+                    get_host_addr(full_node_peer.host, self.base_config.get("prefer_ipv6")), full_node_peer.port
+                )
             if full_node_peer in peers or full_node_resolved in peers:
                 self.log.info(f"Will not attempt to connect to other nodes, already connected to {full_node_peer}")
                 for connection in self.server.get_full_node_connections():
@@ -785,8 +804,14 @@ class WalletNode:
             for i in range(len(coins)):
                 assert coins[i][0] == proofs[i][0]
                 coin_list_1: List[Coin] = coins[i][1]
-                puzzle_hash_proof: bytes32 = proofs[i][1]
-                coin_list_proof: Optional[bytes32] = proofs[i][2]
+                # TODO: address hint error and remove ignore
+                #       error: Incompatible types in assignment (expression has type "bytes", variable has type
+                #       "bytes32")  [assignment]
+                puzzle_hash_proof: bytes32 = proofs[i][1]  # type: ignore[assignment]
+                # TODO: address hint error and remove ignore
+                #       error: Incompatible types in assignment (expression has type "Optional[bytes]", variable has
+                #       type "Optional[bytes32]")  [assignment]
+                coin_list_proof: Optional[bytes32] = proofs[i][2]  # type: ignore[assignment]
                 if len(coin_list_1) == 0:
                     # Verify exclusion proof for puzzle hash
                     not_included = confirm_not_included_already_hashed(
@@ -799,10 +824,13 @@ class WalletNode:
                 else:
                     try:
                         # Verify inclusion proof for coin list
+                        # TODO: address hint error and remove ignore
+                        #       error: Argument 3 to "confirm_included_already_hashed" has incompatible type
+                        #       "Optional[bytes32]"; expected "bytes32"  [arg-type]
                         included = confirm_included_already_hashed(
                             root,
                             hash_coin_list(coin_list_1),
-                            coin_list_proof,
+                            coin_list_proof,  # type: ignore[arg-type]
                         )
                         if included is False:
                             return False
@@ -887,10 +915,14 @@ class WalletNode:
             all_added_coins = await self.get_additions(peer, block, [], get_all_additions=True)
             assert all_added_coins is not None
             if all_added_coins is not None:
-
+                all_added_coin_parents = [c.parent_coin_info for c in all_added_coins]
                 for coin in all_added_coins:
                     # This searches specifically for a launcher being created, and adds the solution of the launcher
-                    if coin.puzzle_hash == SINGLETON_LAUNCHER_HASH and coin.parent_coin_info in removed_coin_ids:
+                    if (
+                        coin.puzzle_hash == SINGLETON_LAUNCHER_HASH  # Check that it's a launcher
+                        and coin.name() in all_added_coin_parents  # Check that it's ephemermal
+                        and coin.parent_coin_info in removed_coin_ids  # Check that an interesting coin created it
+                    ):
                         cs: CoinSpend = await self.fetch_puzzle_solution(peer, block.height, coin)
                         additional_coin_spends.append(cs)
                         # Apply this coin solution, which might add things to interested list
@@ -964,7 +996,7 @@ class WalletNode:
         for coin in additions:
             puzzle_store = self.wallet_state_manager.puzzle_store
             record_info: Optional[DerivationRecord] = await puzzle_store.get_derivation_record_for_puzzle_hash(
-                coin.puzzle_hash.hex()
+                coin.puzzle_hash
             )
             if record_info is not None and record_info.wallet_type == WalletType.COLOURED_COIN:
                 # TODO why ?

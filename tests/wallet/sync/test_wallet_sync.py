@@ -4,14 +4,13 @@ import asyncio
 import pytest
 from colorlog import logging
 
-from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward, calculate_base_timelord_fee
+from skynet.consensus.block_rewards import calculate_base_farmer_reward, calculate_pool_reward
 from skynet.protocols import full_node_protocol
 from skynet.simulator.simulator_protocol import FarmNewBlockProtocol
 from skynet.types.peer_info import PeerInfo
 from skynet.util.ints import uint16, uint32
 from skynet.wallet.wallet_state_manager import WalletStateManager
 from tests.connection_utils import disconnect_all_and_reconnect
-from tests.core.fixtures import default_400_blocks, default_1000_blocks
 from tests.setup_nodes import bt, self_hostname, setup_node_and_wallet, setup_simulators_and_wallets, test_constants
 from tests.time_out_assert import time_out_assert
 
@@ -162,7 +161,7 @@ class TestWalletSync:
 
         # Confirm we have the funds
         funds = sum(
-            [calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i)) + calculate_base_timelord_fee(uint32(i)) for i in range(1, num_blocks)]
+            [calculate_pool_reward(uint32(i)) + calculate_base_farmer_reward(uint32(i)) for i in range(1, num_blocks)]
         )
 
         await time_out_assert(5, wallet.get_confirmed_balance, funds)
@@ -224,7 +223,7 @@ class TestWalletSync:
         await disconnect_all_and_reconnect(server_2, fn_server)
 
         # Confirm we have the funds
-        funds = calculate_pool_reward(uint32(len(blocks_reorg_1))) + calculate_base_farmer_reward + calculate_base_timelord_fee(uint32(len(blocks_reorg_1))) (
+        funds = calculate_pool_reward(uint32(len(blocks_reorg_1))) + calculate_base_farmer_reward(
             uint32(len(blocks_reorg_1))
         )
 

@@ -78,11 +78,11 @@ class HarvesterCacheEntry:
         self.data = data
         self.bump_last_update()
 
-    def needs_update(self):
-        return time.time() - self.last_update > UPDATE_HARVESTER_CACHE_INTERVAL
+    def needs_update(self, update_interval: int):
+        return time.time() - self.last_update > update_interval
 
-    def expired(self):
-        return time.time() - self.last_update > UPDATE_HARVESTER_CACHE_INTERVAL * 10
+    def expired(self, update_interval: int):
+        return time.time() - self.last_update > update_interval * 10
 
 
 class Farmer:
@@ -114,7 +114,10 @@ class Farmer:
         # A dictionary of keys to time added. These keys refer to keys in the above 4 dictionaries. This is used
         # to periodically clear the memory
         self.cache_add_time: Dict[bytes32, uint64] = {}
-        self.lastChannageTime = 0
+
+        # Interval to request plots from connected harvesters
+        self.update_harvester_cache_interval = UPDATE_HARVESTER_CACHE_INTERVAL
+
         self.cache_clear_task: asyncio.Task
         self.update_pool_state_task: asyncio.Task
         self.constants = consensus_constants
@@ -145,26 +148,26 @@ class Farmer:
 
         if len(self.get_public_keys()) == 0:
             error_str = "No keys exist. Please run 'skynet keys generate' or open the UI."
-            #raise RuntimeError(error_str)
-        elif len(self.get_public_keys()) > 0:
-            # This is the farmer configuration
-            self.farmer_target_encoded = self.config["xnt_target_address"]
-            self.farmer_target = decode_puzzle_hash(self.farmer_target_encoded)
+            raise RuntimeError(error_str)
 
-            self.pool_public_keys = [G1Element.from_bytes(bytes.fromhex(pk)) for pk in self.config["pool_public_keys"]]
+        # This is the farmer configuration
+        self.farmer_target_encoded = self.config["xnt_target_address"]
+        self.farmer_target = decode_puzzle_hash(self.farmer_target_encoded)
 
-            # This is the self pooling configuration, which is only used for original self-pooled plots
-            self.pool_target_encoded = self.pool_config["xnt_target_address"]
-            self.pool_target = decode_puzzle_hash(self.pool_target_encoded)
-            self.pool_sks_map: Dict = {}
-            for key in self.get_private_keys():
-                self.pool_sks_map[bytes(key.get_g1())] = key
+        self.pool_public_keys = [G1Element.from_bytes(bytes.fromhex(pk)) for pk in self.config["pool_public_keys"]]
 
-            assert len(self.farmer_target) == 32
-            assert len(self.pool_target) == 32
-            if len(self.pool_sks_map) == 0:
-                error_str = "No keys exist. Please run 'skynet keys generate' or open the UI."
-                #raise RuntimeError(error_str)
+        # This is the self pooling configuration, which is only used for original self-pooled plots
+        self.pool_target_encoded = self.pool_config["xnt_target_address"]
+        self.pool_target = decode_puzzle_hash(self.pool_target_encoded)
+        self.pool_sks_map: Dict = {}
+        for key in self.get_private_keys():
+            self.pool_sks_map[bytes(key.get_g1())] = key
+
+        assert len(self.farmer_target) == 32
+        assert len(self.pool_target) == 32
+        if len(self.pool_sks_map) == 0:
+            error_str = "No keys exist. Please run 'skynet keys generate' or open the UI."
+            raise RuntimeError(error_str)
 
         # The variables below are for use with an actual pool
 
@@ -195,16 +198,15 @@ class Farmer:
         self.state_changed_callback = callback
 
     async def on_connect(self, peer: WSSkynetConnection):
-        if len(self.get_public_keys()) > 0:
-            # Sends a handshake to the harvester
-            self.state_changed("add_connection", {})
-            handshake = harvester_protocol.HarvesterHandshake(
-                self.get_public_keys(),
-                self.pool_public_keys,
-            )
-            if peer.connection_type is NodeType.HARVESTER:
-                msg = make_msg(ProtocolMessageTypes.harvester_handshake, handshake)
-                await peer.send_message(msg)
+        # Sends a handshake to the harvester
+        self.state_changed("add_connection", {})
+        handshake = harvester_protocol.HarvesterHandshake(
+            self.get_public_keys(),
+            self.pool_public_keys,
+        )
+        if peer.connection_type is NodeType.HARVESTER:
+            msg = make_msg(ProtocolMessageTypes.harvester_handshake, handshake)
+            await peer.send_message(msg)
 
     def set_server(self, server):
         self.server = server
@@ -299,6 +301,7 @@ class Farmer:
         assert owner_sk.get_g1() == pool_config.owner_public_key
         signature: G2Element = AugSchemeMPL.sign(owner_sk, post_farmer_payload.get_hash())
         post_farmer_request = PostFarmerRequest(post_farmer_payload, signature)
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -591,7 +594,7 @@ class Farmer:
             remove_peers = []
             for peer_id, peer_cache in host_cache.items():
                 # If the peer cache is expired it means the harvester didn't respond for too long
-                if peer_cache.expired():
+                if peer_cache.expired(self.update_harvester_cache_interval):
                     remove_peers.append(peer_id)
             for key in remove_peers:
                 del host_cache[key]
@@ -604,11 +607,11 @@ class Farmer:
         updated = False
         for connection in self.server.get_connections(NodeType.HARVESTER):
             cache_entry = await self.get_cached_harvesters(connection)
-            if cache_entry.needs_update():
+            if cache_entry.needs_update(self.update_harvester_cache_interval):
                 self.log.debug(f"update_cached_harvesters update harvester: {connection.peer_node_id}")
                 cache_entry.bump_last_update()
                 response = await connection.request_plots(
-                    harvester_protocol.RequestPlots(), timeout=UPDATE_HARVESTER_CACHE_INTERVAL
+                    harvester_protocol.RequestPlots(), timeout=self.update_harvester_cache_interval
                 )
                 if response is not None:
                     if isinstance(response, harvester_protocol.RespondPlots):
@@ -626,7 +629,8 @@ class Farmer:
                         )
                 else:
                     self.log.error(
-                        "Harvester did not respond. You might need to update harvester to the latest version"
+                        f"Harvester '{connection.peer_host}/{connection.peer_node_id}' did not respond: "
+                        f"(version mismatch or time out {UPDATE_HARVESTER_CACHE_INTERVAL}s)"
                     )
         return updated
 
@@ -707,9 +711,8 @@ class Farmer:
                     refresh_slept = 0
 
                 # Handles harvester plots cache cleanup and updates
-                if len(self.get_public_keys()) > 0:
-                    if await self.update_cached_harvesters():
-                        self.state_changed("new_plots", await self.get_harvesters())
+                if await self.update_cached_harvesters():
+                    self.state_changed("new_plots", await self.get_harvesters())
             except Exception:
                 log.error(f"_periodically_clear_cache_and_refresh_task failed: {traceback.format_exc()}")
 

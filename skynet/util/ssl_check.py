@@ -141,7 +141,7 @@ def check_ssl(root_path: Path) -> None:
         for path, actual_permissions, expected_permissions in invalid_files:
             print(
                 get_ssl_perm_warning(path, actual_permissions, expected_permissions)
-             )  # lgtm [py/clear-text-logging-sensitive-data]
+            )  # lgtm [py/clear-text-logging-sensitive-data]
         print("One or more SSL files were found with permission issues.")
         print("Run `skynet init --fix-ssl-permissions` to fix issues.")
 
@@ -185,6 +185,7 @@ def fix_ssl(root_path: Path) -> None:
 
     certs_to_check, keys_to_check = get_all_ssl_file_paths(root_path)
     files_to_fix = verify_ssl_certs_and_keys(certs_to_check, keys_to_check)
+
     for (file, mask, updated_mode) in files_to_fix:
         # Check that permissions are correct, and if not, attempt to fix
         (valid, fixed) = check_and_fix_permissions_for_ssl_file(file, mask, updated_mode)

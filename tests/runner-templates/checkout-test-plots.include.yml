@@ -1,8 +1,14 @@
     - name: Checkout test blocks and plots
       uses: actions/checkout@v2
       with:
-        repository: 'SkynetNetwork/test-cache'
+        repository: 'Skynet-Network/test-cache'
         path: '.skynet'
         ref: '0.27.0'
         fetch-depth: 1
 
+    - name: Link home directory
+      run: |
+        cd $HOME
+        ln -s $GITHUB_WORKSPACE/.skynet
+        echo "$HOME/.skynet"
+        ls -al $HOME/.skynet

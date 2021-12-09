@@ -13,7 +13,7 @@ from skynet.consensus.pot_iterations import is_overflow_block
 from skynet.full_node.bundle_tools import detect_potential_template_generator
 from skynet.full_node.full_node_api import FullNodeAPI
 from skynet.full_node.signage_point import SignagePoint
-from skynet.protocols import full_node_protocol as fnp, full_node_protocol
+from skynet.protocols import full_node_protocol as fnp, full_node_protocol, wallet_protocol
 from skynet.protocols import timelord_protocol
 from skynet.protocols.full_node_protocol import RespondTransaction
 from skynet.protocols.protocol_message_types import ProtocolMessageTypes
@@ -38,7 +38,6 @@ from skynet.util.ints import uint8, uint16, uint32, uint64
 from skynet.util.recursive_replace import recursive_replace
 from skynet.util.vdf_prover import get_vdf_info_and_proof
 from tests.wallet_tools import WalletTool
-from tests.core.fixtures import empty_blockchain  # noqa: F401
 from skynet.wallet.cc_wallet.cc_wallet import CCWallet
 from skynet.wallet.transaction_record import TransactionRecord
 
@@ -47,7 +46,6 @@ from tests.core.full_node.test_coin_store import get_future_reward_coins
 from tests.core.full_node.test_mempool_performance import wallet_height_at_least
 from tests.core.make_block_generator import make_spend_bundle
 from tests.core.node_height import node_height_at_least
-from tests.core.fixtures import empty_blockchain  # noqa: F401
 from tests.setup_nodes import bt, self_hostname, setup_simulators_and_wallets, test_constants
 from tests.time_out_assert import time_out_assert, time_out_assert_custom_interval, time_out_messages
 
@@ -524,6 +522,75 @@ class TestFullNodeProtocol:
         )
 
     @pytest.mark.asyncio
+    async def test_respond_end_of_sub_slot_no_reorg(self, wallet_nodes):
+        full_node_1, full_node_2, server_1, server_2, wallet_a, wallet_receiver = wallet_nodes
+
+        incoming_queue, dummy_node_id = await add_dummy_connection(server_1, 12312)
+        expected_requests = 0
+        if await full_node_1.full_node.synced():
+            expected_requests = 1
+        await time_out_assert(10, time_out_messages(incoming_queue, "request_mempool_transactions", expected_requests))
+
+        peer = await connect_and_get_peer(server_1, server_2)
+
+        # First get two blocks in the same sub slot
+        blocks = await full_node_1.get_all_full_blocks()
+        saved_seed = b""
+        for i in range(0, 9999999):
+            blocks = bt.get_consecutive_blocks(5, block_list_input=blocks, skip_slots=1, seed=i.to_bytes(4, "big"))
+            if len(blocks[-1].finished_sub_slots) == 0:
+                saved_seed = i.to_bytes(4, "big")
+                break
+
+        # Then create a fork after the first block.
+        blocks_alt_1 = bt.get_consecutive_blocks(1, block_list_input=blocks[:-1], skip_slots=1)
+        for slot in blocks[-1].finished_sub_slots[:-2]:
+            await full_node_1.respond_end_of_sub_slot(fnp.RespondEndOfSubSlot(slot), peer)
+
+        # Add all blocks
+        for block in blocks:
+            await full_node_1.full_node.respond_block(fnp.RespondBlock(block), peer)
+
+        original_ss = full_node_1.full_node.full_node_store.finished_sub_slots[:]
+
+        # Add subslot for first alternative
+        for slot in blocks_alt_1[-1].finished_sub_slots:
+            await full_node_1.respond_end_of_sub_slot(fnp.RespondEndOfSubSlot(slot), peer)
+
+        assert full_node_1.full_node.full_node_store.finished_sub_slots == original_ss
+
+    @pytest.mark.asyncio
+    async def test_respond_end_of_sub_slot_race(self, wallet_nodes):
+        full_node_1, full_node_2, server_1, server_2, wallet_a, wallet_receiver = wallet_nodes
+
+        incoming_queue, dummy_node_id = await add_dummy_connection(server_1, 12312)
+        expected_requests = 0
+        if await full_node_1.full_node.synced():
+            expected_requests = 1
+        await time_out_assert(10, time_out_messages(incoming_queue, "request_mempool_transactions", expected_requests))
+
+        peer = await connect_and_get_peer(server_1, server_2)
+
+        # First get two blocks in the same sub slot
+        blocks = await full_node_1.get_all_full_blocks()
+        saved_seed = b""
+        blocks = bt.get_consecutive_blocks(1, block_list_input=blocks)
+
+        await full_node_1.full_node.respond_block(fnp.RespondBlock(blocks[-1]), peer)
+
+        blocks = bt.get_consecutive_blocks(1, block_list_input=blocks, skip_slots=1)
+
+        original_ss = full_node_1.full_node.full_node_store.finished_sub_slots[:].copy()
+        # Add the block
+        await full_node_1.full_node.respond_block(fnp.RespondBlock(blocks[-1]), peer)
+
+        # Replace with original SS in order to imitate race condition (block added but subslot not yet added)
+        full_node_1.full_node.full_node_store.finished_sub_slots = original_ss
+
+        for slot in blocks[-1].finished_sub_slots:
+            await full_node_1.respond_end_of_sub_slot(fnp.RespondEndOfSubSlot(slot), peer)
+
+    @pytest.mark.asyncio
     async def test_respond_unfinished(self, wallet_nodes):
         full_node_1, full_node_2, server_1, server_2, wallet_a, wallet_receiver = wallet_nodes
 
@@ -629,7 +696,6 @@ class TestFullNodeProtocol:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=ph,
             pool_reward_puzzle_hash=ph,
-            timelord_reward_puzzle_hash=ph,
         )
         await full_node_1.full_node.respond_block(fnp.RespondBlock(blocks[-2]))
         await full_node_1.full_node.respond_block(fnp.RespondBlock(blocks[-1]))
@@ -696,13 +762,15 @@ class TestFullNodeProtocol:
                 uint32(0),
                 block.reward_chain_block.get_unfinished().get_hash(),
             )
-            asyncio.create_task(full_node_1.new_peak(new_peak, dummy_peer))
+            task_1 = asyncio.create_task(full_node_1.new_peak(new_peak, dummy_peer))
             await time_out_assert(10, time_out_messages(incoming_queue, "request_block", 1))
+            task_1.cancel()
 
             await full_node_1.full_node.respond_block(fnp.RespondBlock(block), peer)
             # Ignores, already have
-            asyncio.create_task(full_node_1.new_peak(new_peak, dummy_peer))
+            task_2 = asyncio.create_task(full_node_1.new_peak(new_peak, dummy_peer))
             await time_out_assert(10, time_out_messages(incoming_queue, "request_block", 0))
+            task_2.cancel()
 
         # Ignores low weight
         new_peak = fnp.NewPeak(
@@ -738,7 +806,6 @@ class TestFullNodeProtocol:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=wallet_ph,
             pool_reward_puzzle_hash=wallet_ph,
-            timelord_reward_puzzle_hash=wallet_ph,
         )
         for block in blocks:
             await full_node_1.full_node.respond_block(fnp.RespondBlock(block))
@@ -775,7 +842,7 @@ class TestFullNodeProtocol:
             )
             assert spend_bundle is not None
             cost_result = await full_node_1.full_node.mempool_manager.pre_validate_spendbundle(
-                spend_bundle, spend_bundle.name()
+                spend_bundle, None, spend_bundle.name()
             )
             log.info(f"Cost result: {cost_result.clvm_cost}")
 
@@ -821,9 +888,9 @@ class TestFullNodeProtocol:
             spend_bundle = wallet_receiver.generate_signed_transaction(
                 uint64(500), receiver_puzzlehash, coin_record.coin, fee=fee
             )
-            respond_transaction = fnp.RespondTransaction(spend_bundle)
+            respond_transaction = wallet_protocol.SendTransaction(spend_bundle)
 
-            await full_node_1.respond_transaction(respond_transaction, peer)
+            await full_node_1.send_transaction(respond_transaction)
 
             request = fnp.RequestTransaction(spend_bundle.get_hash())
             req = await full_node_1.request_transaction(request)
@@ -913,7 +980,6 @@ class TestFullNodeProtocol:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=wallet_ph,
             pool_reward_puzzle_hash=wallet_ph,
-            timelord_reward_puzzle_hash=wallet_ph,
         )
 
         incoming_queue, dummy_node_id = await add_dummy_connection(server_1, 12312)
@@ -1007,7 +1073,6 @@ class TestFullNodeProtocol:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=wallet_a.get_new_puzzlehash(),
             pool_reward_puzzle_hash=wallet_a.get_new_puzzlehash(),
-            timelord_reward_puzzle_hash=wallet_receiver.get_new_puzzlehash(),
         )
         spend_bundle = wallet_a.generate_signed_transaction(
             1123,
@@ -1051,7 +1116,6 @@ class TestFullNodeProtocol:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=wallet_a.get_new_puzzlehash(),
             pool_reward_puzzle_hash=wallet_a.get_new_puzzlehash(),
-            timelord_reward_puzzle_hash=wallet_a.get_new_puzzlehash(),
         )
 
         spend_bundle = wallet_a.generate_signed_transaction(
@@ -1232,12 +1296,11 @@ class TestFullNodeProtocol:
             uint8(11),
             [],
             peak.sub_slot_iters,
-            timelord_reward_puzzle_hash=peak.timelord_puzzle_hash
         )
 
         peer = await connect_and_get_peer(server_1, server_2)
         res = await full_node_1.new_signage_point_or_end_of_sub_slot(
-            fnp.NewSignagePointOrEndOfSubSlot(None, sp.cc_vdf.challenge, uint8(11), sp.rc_vdf.challenge, sp.timelord_reward_puzzle_hash), peer
+            fnp.NewSignagePointOrEndOfSubSlot(None, sp.cc_vdf.challenge, uint8(11), sp.rc_vdf.challenge), peer
         )
         assert res.type == ProtocolMessageTypes.request_signage_point_or_end_of_sub_slot.value
         assert fnp.RequestSignagePointOrEndOfSubSlot.from_bytes(res.data).index_from_challenge == uint8(11)
@@ -1299,16 +1362,15 @@ class TestFullNodeProtocol:
             uint8(4),
             [],
             peak_2.sub_slot_iters,
-            peak_2.timelord_puzzle_hash
         )
 
         # Submits the signage point, cannot add because don't have block
         await full_node_1.respond_signage_point(
-            fnp.RespondSignagePoint(4, sp.cc_vdf, sp.cc_proof, sp.rc_vdf, sp.rc_proof, sp.timelord_reward_puzzle_hash), peer
+            fnp.RespondSignagePoint(4, sp.cc_vdf, sp.cc_proof, sp.rc_vdf, sp.rc_proof), peer
         )
         # Should not add duplicates to cache though
         await full_node_1.respond_signage_point(
-            fnp.RespondSignagePoint(4, sp.cc_vdf, sp.cc_proof, sp.rc_vdf, sp.rc_proof, sp.timelord_reward_puzzle_hash), peer
+            fnp.RespondSignagePoint(4, sp.cc_vdf, sp.cc_proof, sp.rc_vdf, sp.rc_proof), peer
         )
         assert full_node_1.full_node.full_node_store.get_signage_point(sp.cc_vdf.output.get_hash()) is None
         assert len(full_node_1.full_node.full_node_store.future_sp_cache[sp.rc_vdf.challenge]) == 1

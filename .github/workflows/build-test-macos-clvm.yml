@@ -44,11 +44,10 @@ jobs:
 
     - name: Create keychain for CI use
       run: |
-        security create-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
+        security create-keychain -p foo skynetchain
         security default-keychain -s skynetchain
-        security unlock-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
+        security unlock-keychain -p foo skynetchain
         security set-keychain-settings -t 7200 -u skynetchain
-
 
     - name: Get pip cache dir
       id: pip-cache
@@ -64,14 +63,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-# Omitted checking out blocks and plots repo SkynetNetwork/test-cache
-
-    - name: Link home directory
-      run: |
-        cd $HOME
-        ln -s $GITHUB_WORKSPACE/.skynet
-        echo "$HOME/.skynet"
-        ls -al $HOME/.skynet
+# Omitted checking out blocks and plots repo Skynet-Network/test-cache
 
     - name: Run install script
       env:
@@ -79,19 +71,14 @@ jobs:
         BUILD_VDF_CLIENT: "N"
       run: |
         brew install boost
-        sh install.sh
+        sh install.sh -d
 
 # Omitted installing Timelord
-
-    - name: Install developer requirements
-      run: |
-        . ./activate
-        venv/bin/python -m pip install pytest pytest-asyncio pytest-xdist
 
     - name: Test clvm code with pytest
       run: |
         . ./activate
-        ./venv/bin/py.test tests/clvm/test_skynetlisp_deserialization.py tests/clvm/test_clvm_compilation.py tests/clvm/test_puzzles.py tests/clvm/test_serialized_program.py tests/clvm/test_singletons.py tests/clvm/test_spend_sim.py -s -v --durations 0 -n auto
+        ./venv/bin/py.test tests/clvm/test_*.py -s -v --durations 0 -n auto
 #
 # THIS FILE IS GENERATED. SEE https://github.com/SkynetNetwork/skynet-blockchain/tree/main/tests#readme
 #

@@ -88,7 +88,7 @@ class TestPoolPuzzles(TestCase):
 
         # LAUNCHING
         # Create the escaping inner puzzle
-        GENESIS_CHALLENGE = bytes32.fromhex("977829955316dd9e027cd01a0702b6f3441c6b0a5bdbe7b8e2c8a461283f0900")
+        GENESIS_CHALLENGE = bytes32.fromhex("ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb")
         launcher_coin = singleton_top_layer.generate_launcher_coin(
             starting_coin,
             START_AMOUNT,
@@ -164,7 +164,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
         # Test that we can retrieve the extra data
         assert get_delayed_puz_info_from_launcher_spend(launcher_coinsol) == (DELAY_TIME, DELAY_PH)
         assert solution_to_pool_state(launcher_coinsol) == pool_state
@@ -187,7 +187,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
 
         # HONEST ABSORB
         time = CoinTimestamp(10000030, 2)
@@ -223,7 +223,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
 
         # ABSORB A NON EXISTENT REWARD (Negative test)
         last_coinsol: CoinSpend = list(
@@ -255,7 +255,7 @@ class TestPoolPuzzles(TestCase):
                 time,
                 DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
                 DEFAULT_CONSTANTS.COST_PER_BYTE,
-             )
+            )
         except BadSpendBundleError as e:
             assert str(e) == "condition validation failure Err.ASSERT_ANNOUNCE_CONSUMED_FAILED"
 
@@ -285,7 +285,7 @@ class TestPoolPuzzles(TestCase):
                 time,
                 DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
                 DEFAULT_CONSTANTS.COST_PER_BYTE,
-             )
+            )
         except BadSpendBundleError as e:
             assert str(e) == "condition validation failure Err.ASSERT_ANNOUNCE_CONSUMED_FAILED"
 
@@ -316,7 +316,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
 
         # ESCAPE TOO FAST (Negative test)
         # find the singleton
@@ -342,8 +342,8 @@ class TestPoolPuzzles(TestCase):
                 SpendBundle([return_coinsol], sig),
                 time,
                 DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
-            DEFAULT_CONSTANTS.COST_PER_BYTE,
-             )
+                DEFAULT_CONSTANTS.COST_PER_BYTE,
+            )
         except BadSpendBundleError as e:
             assert str(e) == "condition validation failure Err.ASSERT_HEIGHT_RELATIVE_FAILED"
 
@@ -367,7 +367,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
 
         # LEAVE THE WAITING ROOM
         time = CoinTimestamp(20000000, 10000)
@@ -403,7 +403,7 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )
 
         # ABSORB ONCE MORE FOR GOOD MEASURE
         time = CoinTimestamp(20000000, 10005)
@@ -424,4 +424,4 @@ class TestPoolPuzzles(TestCase):
             time,
             DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             DEFAULT_CONSTANTS.COST_PER_BYTE,
-         )
+        )

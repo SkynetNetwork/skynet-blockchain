@@ -24,6 +24,7 @@ def generate_and_print():
     print("Note that this key has not been added to the keychain. Run skynet keys add")
     return mnemonic
 
+
 @unlocks_keyring(use_passphrase_cache=True)
 def generate_and_add():
     """
@@ -34,10 +35,12 @@ def generate_and_add():
     print("Generating private key")
     add_private_key_seed(mnemonic)
 
+
 @unlocks_keyring(use_passphrase_cache=True)
 def query_and_add_private_key_seed():
     mnemonic = input("Enter the mnemonic you want to use: ")
     add_private_key_seed(mnemonic)
+
 
 @unlocks_keyring(use_passphrase_cache=True)
 def add_private_key_seed(mnemonic: str):
@@ -54,6 +57,7 @@ def add_private_key_seed(mnemonic: str):
     except ValueError as e:
         print(e)
         return None
+
 
 @unlocks_keyring(use_passphrase_cache=True)
 def show_all_keys(show_mnemonic: bool):
@@ -96,6 +100,7 @@ def show_all_keys(show_mnemonic: bool):
             print("  Mnemonic seed (24 secret words):")
             print(mnemonic)
 
+
 @unlocks_keyring(use_passphrase_cache=True)
 def delete(fingerprint: int):
     """
@@ -103,6 +108,7 @@ def delete(fingerprint: int):
     """
     print(f"Deleting private_key with fingerprint {fingerprint}")
     keychain.delete_key_by_fingerprint(fingerprint)
+
 
 @unlocks_keyring(use_passphrase_cache=True)
 def sign(message: str, fingerprint: int, hd_path: str, as_bytes: bool):

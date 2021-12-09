@@ -1,12 +1,14 @@
 from setuptools import setup
 
 dependencies = [
-    "blspy==1.0.6",  # Signature library
+    "multidict==5.1.0",  # Avoid 5.2.0 due to Avast
+    "aiofiles==0.7.0",  # Async IO for files
+    "blspy==1.0.8",  # Signature library
     "skynetvdf==1.0.3.dev8",  # timelord and vdf verification
     "skynetbip158==1.1.dev3",  # bip158-style wallet filters
     "skynetpos==1.0.4.dev14",  # proof of space
     "clvm==0.9.7",
-    "clvm_rs==0.1.14",
+    "clvm_rs==0.1.16",
     "clvm_tools==0.4.3",
     "aiohttp==3.7.4",  # HTTP server for full node rpc
     "aiosqlite==0.17.0",  # asyncio wrapper for sqlite, to store blocks
@@ -25,9 +27,9 @@ dependencies = [
     "sortedcontainers==2.4.0",  # For maintaining sorted mempools
     "websockets==8.1.0",  # For use in wallet RPC and electron UI
     "click==7.1.2",  # For the CLI
-    #  "dnspython==2.1.0",  # Query DNS seeds
     "async-dns==2.0.0", # Async query DNS seeds
-    "watchdog==2.1.3",  # Filesystem event watching - watches keyring.yaml
+    "watchdog==2.1.6",  # Filesystem event watching - watches keyring.yaml
+    "dnslib==0.9.14",  # dns lib
 ]
 
 upnp_dependencies = [
@@ -37,11 +39,18 @@ upnp_dependencies = [
 dev_dependencies = [
     "pytest",
     "pytest-asyncio",
+    "pytest-monitor; sys_platform == 'linux'",
+    "pytest-xdist",
     "flake8",
     "mypy",
     "black",
     "aiohttp_cors",  # For blackd
     "ipython",  # For asyncio debugging
+    "types-aiofiles",
+    "types-click",
+    "types-cryptography",
+    "types-pkg_resources",
+    "types-pyyaml",
     "types-setuptools",
 ]
 
@@ -73,10 +82,13 @@ kwargs = dict(
         "skynet.farmer",
         "skynet.harvester",
         "skynet.introducer",
+        "skynet.plotters",
         "skynet.plotting",
         "skynet.pools",
         "skynet.protocols",
         "skynet.rpc",
+        "skynet.seeder",
+        "skynet.seeder.util",
         "skynet.server",
         "skynet.simulator",
         "skynet.types.blockchain_format",
@@ -101,6 +113,9 @@ kwargs = dict(
             "skynet_harvester = skynet.server.start_harvester:main",
             "skynet_farmer = skynet.server.start_farmer:main",
             "skynet_introducer = skynet.server.start_introducer:main",
+            "skynet_seeder = skynet.cmds.seeder:main",
+            "skynet_seeder_crawler = skynet.seeder.start_crawler:main",
+            "skynet_seeder_server = skynet.seeder.dns_server:main",
             "skynet_timelord = skynet.server.start_timelord:main",
             "skynet_timelord_launcher = skynet.timelord.timelord_launcher:main",
             "skynet_full_node_simulator = skynet.simulator.start_simulator:main",
@@ -121,4 +136,4 @@ kwargs = dict(
 
 
 if __name__ == "__main__":
-    setup(**kwargs)
+    setup(**kwargs)  # type: ignore

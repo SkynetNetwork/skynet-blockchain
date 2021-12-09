@@ -34,7 +34,7 @@ skynet-blockchain.tar.gz.tar.gz
 #*.spec
 build_scripts/*.dmg
 build_scripts/build
-build_scripts/final_installer
+
 
 # Installer logs
 pip-log.txt
@@ -98,6 +98,3 @@ skynet-blockchain-gui/src/locales/_build
 build_scripts\win_build
 build_scripts/win_build
 win_code_sign_cert.p12
-
-# Timelord installer
-install-timelord.sh

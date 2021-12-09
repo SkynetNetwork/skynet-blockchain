@@ -1,15 +1,4 @@
 #!/bin/bash
-# Execute this script from project root folder.
-
-. ./activate
-cd build_scripts
-echo "Clear all..."
-rm -rf ./build
-rm -rf ./dist
-rm -rf ./final_installer
-rm -rf ../skynet-blockchain-gui/build
-rm -rf ../skynet-blockchain-gui/daemon
-echo "...OK"
 
 if [ ! "$1" ]; then
   echo "This script requires either amd64 of arm64 as an argument"
@@ -37,6 +26,7 @@ echo "Skynet Installer Version is: $SKYNET_INSTALLER_VERSION"
 echo "Installing npm and electron packagers"
 npm install electron-packager -g
 npm install electron-installer-debian -g
+npm install lerna -g
 
 echo "Create dist/"
 rm -rf dist
@@ -52,14 +42,15 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
-cp -r dist/daemon ../skynet-blockchain-gui
+cp -r dist/daemon ../skynet-blockchain-gui/packages/gui
 cd .. || exit
 cd skynet-blockchain-gui || exit
 
 echo "npm build"
+lerna clean -y
 npm install
-npm audit fix
-./node_modules/.bin/electron-rebuild -f -w node-pty
+# Audit fix does not currently work with Lerna. See https://github.com/lerna/lerna/issues/1663
+# npm audit fix
 npm run build
 LAST_EXIT_CODE=$?
 if [ "$LAST_EXIT_CODE" -ne 0 ]; then
@@ -67,13 +58,16 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
+# Change to the gui package
+cd packages/gui || exit
+
 # sets the version for skynet-blockchain in package.json
 cp package.json package.json.orig
 jq --arg VER "$SKYNET_INSTALLER_VERSION" '.version=$VER' package.json > temp.json && mv temp.json package.json
 
 electron-packager . skynet-blockchain --asar.unpack="**/daemon/**" --platform=linux \
 --icon=src/assets/img/Skynet.icns --overwrite --app-bundle-id=net.skynet.blockchain \
---appVersion=$SKYNET_INSTALLER_VERSION
+--appVersion=$SKYNET_INSTALLER_VERSION --executable-name=skynet-blockchain
 LAST_EXIT_CODE=$?
 
 # reset the package.json to the original
@@ -84,14 +78,14 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
-mv $DIR_NAME ../build_scripts/dist/
-cd ../build_scripts || exit
+mv $DIR_NAME ../../../build_scripts/dist/
+cd ../../../build_scripts || exit
 
 echo "Create skynet-$SKYNET_INSTALLER_VERSION.deb"
 rm -rf final_installer
 mkdir final_installer
 electron-installer-debian --src dist/$DIR_NAME/ --dest final_installer/ \
---arch "$PLATFORM" --options.version $SKYNET_INSTALLER_VERSION
+--arch "$PLATFORM" --options.version $SKYNET_INSTALLER_VERSION --options.bin skynet-blockchain --options.name skynet-blockchain
 LAST_EXIT_CODE=$?
 if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	echo >&2 "electron-installer-debian failed!"
@@ -99,5 +93,3 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 fi
 
 ls final_installer/
-cd ..
-deactivate

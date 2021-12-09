@@ -114,6 +114,7 @@ def sign_cmd(message: str, fingerprint: int, hd_path: str, as_bytes: bool):
 
     sign(message, fingerprint, hd_path, as_bytes)
 
+
 @keys_cmd.command("verify", short_help="Verify a signature with a pk")
 @click.option("--message", "-d", default=None, help="Enter the message to sign in UTF-8", type=str, required=True)
 @click.option("--public_key", "-p", default=None, help="Enter the pk in hex", type=str, required=True)

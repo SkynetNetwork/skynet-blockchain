@@ -1,4 +1,5 @@
 from collections import Counter
+from decimal import Decimal
 
 import aiohttp
 import asyncio
@@ -9,6 +10,7 @@ import time
 from pprint import pprint
 from typing import List, Dict, Optional, Callable
 
+from skynet.cmds.units import units
 from skynet.cmds.wallet_funcs import print_balance, wallet_coin_unit
 from skynet.pools.pool_wallet_info import PoolWalletInfo, PoolSingletonState
 from skynet.protocols.pool_protocol import POOL_PROTOCOL_VERSION
@@ -21,7 +23,7 @@ from skynet.util.bech32m import encode_puzzle_hash
 from skynet.util.byte_types import hexstr_to_bytes
 from skynet.util.config import load_config
 from skynet.util.default_root import DEFAULT_ROOT_PATH
-from skynet.util.ints import uint16, uint32
+from skynet.util.ints import uint16, uint32, uint64
 from skynet.wallet.transaction_record import TransactionRecord
 from skynet.wallet.util.wallet_types import WalletType
 
@@ -52,7 +54,10 @@ async def create_pool_args(pool_url: str) -> Dict:
 async def create(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> None:
     state = args["state"]
     prompt = not args.get("yes", False)
+    fee = Decimal(args.get("fee", 0))
+    fee_synts = uint64(int(fee * units["skynet"]))
 
+    target_puzzle_hash: Optional[bytes32]
     # Could use initial_pool_state_from_dict to simplify
     if state == "SELF_POOLING":
         pool_url: Optional[str] = None
@@ -67,7 +72,7 @@ async def create(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -
             return
         json_dict = await create_pool_args(pool_url)
         relative_lock_height = json_dict["relative_lock_height"]
-        target_puzzle_hash = hexstr_to_bytes(json_dict["target_puzzle_hash"])
+        target_puzzle_hash = bytes32.from_hexstr(json_dict["target_puzzle_hash"])
     else:
         raise ValueError("Plot NFT must be created in SELF_POOLING or FARMING_TO_POOL state.")
 
@@ -87,6 +92,7 @@ async def create(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -
                 "localhost:5000",
                 "new",
                 state,
+                fee_synts,
             )
             start = time.time()
             while time.time() - start < 10:
@@ -140,17 +146,26 @@ async def pprint_pool_wallet_state(
     if pool_wallet_info.current.state == PoolSingletonState.FARMING_TO_POOL:
         print(f"Current pool URL: {pool_wallet_info.current.pool_url}")
         if pool_wallet_info.launcher_id in pool_state_dict:
+            pool_state = pool_state_dict[pool_wallet_info.launcher_id]
             print(f"Current difficulty: {pool_state_dict[pool_wallet_info.launcher_id]['current_difficulty']}")
             print(f"Points balance: {pool_state_dict[pool_wallet_info.launcher_id]['current_points']}")
-            num_points_found_24h = len(pool_state_dict[pool_wallet_info.launcher_id]["points_found_24h"])
-            if num_points_found_24h > 0:
-                num_points_ack_24h = len(pool_state_dict[pool_wallet_info.launcher_id]["points_acknowledged_24h"])
-                success_pct = num_points_ack_24h / num_points_found_24h
-                print(f"Percent Successful Points (24h): {success_pct:.2%}")
+            points_found_24h = [points for timestamp, points in pool_state["points_found_24h"]]
+            points_acknowledged_24h = [points for timestamp, points in pool_state["points_acknowledged_24h"]]
+            summed_points_found_24h = sum(points_found_24h)
+            summed_points_acknowledged_24h = sum(points_acknowledged_24h)
+            if summed_points_found_24h == 0:
+                success_pct = 0.0
+            else:
+                success_pct = summed_points_acknowledged_24h / summed_points_found_24h
+            print(f"Points found (24h): {summed_points_found_24h}")
+            print(f"Percent Successful Points (24h): {success_pct:.2%}")
         print(f"Relative lock height: {pool_wallet_info.current.relative_lock_height} blocks")
         payout_instructions: str = pool_state_dict[pool_wallet_info.launcher_id]["pool_config"]["payout_instructions"]
         try:
-            payout_address = encode_puzzle_hash(bytes32.fromhex(payout_instructions), address_prefix)
+            # TODO: address hint error and remove ignore
+            #       error: Argument 1 to "encode_puzzle_hash" has incompatible type "bytes"; expected "bytes32"
+            #       [arg-type]
+            payout_address = encode_puzzle_hash(bytes32.fromhex(payout_instructions), address_prefix)  # type: ignore[arg-type]  # noqa: E501
             print(f"Payout instructions (pool will pay to this address): {payout_address}")
         except Exception:
             print(f"Payout instructions (pool will pay you with this): {payout_instructions}")
@@ -190,7 +205,7 @@ async def show(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
         await farmer_client.await_closed()
         return
     pool_state_dict: Dict[bytes32, Dict] = {
-        hexstr_to_bytes(pool_state_item["pool_config"]["launcher_id"]): pool_state_item
+        bytes32.from_hexstr(pool_state_item["pool_config"]["launcher_id"]): pool_state_item
         for pool_state_item in pool_state_list
     }
     if wallet_id_passed_in is not None:
@@ -231,7 +246,7 @@ async def show(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
 
 
 async def get_login_link(launcher_id_str: str) -> None:
-    launcher_id: bytes32 = hexstr_to_bytes(launcher_id_str)
+    launcher_id: bytes32 = bytes32.from_hexstr(launcher_id_str)
     config = load_config(DEFAULT_ROOT_PATH, "config.yaml")
     self_hostname = config["self_hostname"]
     farmer_rpc_port = config["farmer"]["rpc_port"]
@@ -285,6 +300,9 @@ async def join_pool(args: dict, wallet_client: WalletRpcClient, fingerprint: int
     config = load_config(DEFAULT_ROOT_PATH, "config.yaml")
     enforce_https = config["full_node"]["selected_network"] == "mainnet"
     pool_url: str = args["pool_url"]
+    fee = Decimal(args.get("fee", 0))
+    fee_synts = uint64(int(fee * units["skynet"]))
+
     if enforce_https and not pool_url.startswith("https://"):
         print(f"Pool URLs must be HTTPS on mainnet {pool_url}. Aborting.")
         return
@@ -317,6 +335,7 @@ async def join_pool(args: dict, wallet_client: WalletRpcClient, fingerprint: int
         hexstr_to_bytes(json_dict["target_puzzle_hash"]),
         pool_url,
         json_dict["relative_lock_height"],
+        fee_synts,
     )
 
     await submit_tx_with_confirmation(msg, prompt, func, wallet_client, fingerprint, wallet_id)
@@ -325,9 +344,11 @@ async def join_pool(args: dict, wallet_client: WalletRpcClient, fingerprint: int
 async def self_pool(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> None:
     wallet_id = args.get("id", None)
     prompt = not args.get("yes", False)
+    fee = Decimal(args.get("fee", 0))
+    fee_synts = uint64(int(fee * units["skynet"]))
 
     msg = f"Will start self-farming with Plot NFT on wallet id {wallet_id} fingerprint {fingerprint}."
-    func = functools.partial(wallet_client.pw_self_pool, wallet_id)
+    func = functools.partial(wallet_client.pw_self_pool, wallet_id, fee_synts)
     await submit_tx_with_confirmation(msg, prompt, func, wallet_client, fingerprint, wallet_id)
 
 
@@ -346,9 +367,12 @@ async def inspect_cmd(args: dict, wallet_client: WalletRpcClient, fingerprint: i
 
 async def claim_cmd(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> None:
     wallet_id = args.get("id", None)
+    fee = Decimal(args.get("fee", 0))
+    fee_synts = uint64(int(fee * units["skynet"]))
     msg = f"\nWill claim rewards for wallet ID: {wallet_id}."
     func = functools.partial(
         wallet_client.pw_absorb_rewards,
         wallet_id,
+        fee_synts,
     )
     await submit_tx_with_confirmation(msg, False, func, wallet_client, fingerprint, wallet_id)

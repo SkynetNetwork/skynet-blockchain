@@ -19,7 +19,13 @@ from skynet.full_node.signage_point import SignagePoint
 from skynet.protocols import farmer_protocol, full_node_protocol, introducer_protocol, timelord_protocol, wallet_protocol
 from skynet.protocols.full_node_protocol import RejectBlock, RejectBlocks
 from skynet.protocols.protocol_message_types import ProtocolMessageTypes
-from skynet.protocols.wallet_protocol import PuzzleSolutionResponse, RejectHeaderBlocks, RejectHeaderRequest, CoinState, RespondSESInfo
+from skynet.protocols.wallet_protocol import (
+    PuzzleSolutionResponse,
+    RejectHeaderBlocks,
+    RejectHeaderRequest,
+    CoinState,
+    RespondSESInfo,
+)
 from skynet.server.outbound_message import Message, make_msg
 from skynet.types.blockchain_format.coin import Coin, hash_coin_list
 from skynet.types.blockchain_format.pool_target import PoolTarget
@@ -33,6 +39,7 @@ from skynet.types.generator_types import BlockGenerator
 from skynet.types.mempool_inclusion_status import MempoolInclusionStatus
 from skynet.types.mempool_item import MempoolItem
 from skynet.types.peer_info import PeerInfo
+from skynet.types.transaction_queue_entry import TransactionQueueEntry
 from skynet.types.unfinished_block import UnfinishedBlock
 from skynet.util.api_decorators import api_request, peer_required, bytes_required, execute_task, reply_type
 from skynet.util.generator_tools import get_block_header
@@ -105,6 +112,14 @@ class FullNodeAPI:
         """
         # this semaphore limits the number of tasks that can call new_peak() at
         # the same time, since it can be expensive
+        waiter_count = len(self.full_node.new_peak_sem._waiters)
+
+        if waiter_count > 0:
+            self.full_node.log.debug(f"new_peak Waiters: {waiter_count}")
+
+        if waiter_count > 20:
+            return None
+
         async with self.full_node.new_peak_sem:
             return await self.full_node.new_peak(request, peer)
 
@@ -154,9 +169,10 @@ class FullNodeAPI:
                 counter = 0
                 try:
                     while True:
-                        # Limit to asking 10 peers, it's possible that this tx got included on chain already
-                        # Highly unlikely 10 peers that advertised a tx don't respond to a request
-                        if counter == 10:
+                        # Limit to asking to a few peers, it's possible that this tx got included on chain already
+                        # Highly unlikely that the peers that advertised a tx don't respond to a request. Also, if we
+                        # drop some transactions, we don't want to refetch too many times
+                        if counter == 5:
                             break
                         if transaction_id not in full_node.full_node_store.peers_with_tx:
                             break
@@ -190,7 +206,9 @@ class FullNodeAPI:
             fetch_task = asyncio.create_task(
                 tx_request_and_timeout(self.full_node, transaction.transaction_id, task_id)
             )
-            self.full_node.full_node_store.tx_fetch_tasks[task_id] = fetch_task
+            # TODO: address hint error and remove ignore
+            #       error: Invalid index type "bytes" for "Dict[bytes32, Task[Any]]"; expected type "bytes32"  [index]
+            self.full_node.full_node_store.tx_fetch_tasks[task_id] = fetch_task  # type: ignore[index]
             return None
         return None
 
@@ -230,7 +248,17 @@ class FullNodeAPI:
             self.full_node.full_node_store.pending_tx_request.pop(spend_name)
         if spend_name in self.full_node.full_node_store.peers_with_tx:
             self.full_node.full_node_store.peers_with_tx.pop(spend_name)
-        await self.full_node.respond_transaction(tx.transaction, spend_name, peer, test)
+
+        if self.full_node.transaction_queue.qsize() % 100 == 0 and not self.full_node.transaction_queue.empty():
+            self.full_node.log.debug(f"respond_transaction Waiters: {self.full_node.transaction_queue.qsize()}")
+
+        if self.full_node.transaction_queue.full():
+            self.full_node.dropped_tx.add(spend_name)
+            return None
+        # Higher fee means priority is a smaller number, which means it will be handled earlier
+        await self.full_node.transaction_queue.put(
+            (0, TransactionQueueEntry(tx.transaction, tx_bytes, spend_name, peer, test))
+        )
         return None
 
     @api_request
@@ -287,7 +315,10 @@ class FullNodeAPI:
             msg = make_msg(ProtocolMessageTypes.reject_block, reject)
             return msg
         header_hash = self.full_node.blockchain.height_to_hash(request.height)
-        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(header_hash)
+        # TODO: address hint error and remove ignore
+        #       error: Argument 1 to "get_full_block" of "BlockStore" has incompatible type "Optional[bytes32]";
+        #       expected "bytes32"  [arg-type]
+        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(header_hash)  # type: ignore[arg-type]  # noqa: E501
         if block is not None:
             if not request.include_transaction_block and block.transactions_generator is not None:
                 block = dataclasses.replace(block, transactions_generator=None)
@@ -312,8 +343,11 @@ class FullNodeAPI:
         if not request.include_transaction_block:
             blocks: List[FullBlock] = []
             for i in range(request.start_height, request.end_height + 1):
+                # TODO: address hint error and remove ignore
+                #       error: Argument 1 to "get_full_block" of "BlockStore" has incompatible type "Optional[bytes32]";
+                #       expected "bytes32"  [arg-type]
                 block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(
-                    self.full_node.blockchain.height_to_hash(uint32(i))
+                    self.full_node.blockchain.height_to_hash(uint32(i))  # type: ignore[arg-type]
                 )
                 if block is None:
                     reject = RejectBlocks(request.start_height, request.end_height)
@@ -328,8 +362,11 @@ class FullNodeAPI:
         else:
             blocks_bytes: List[bytes] = []
             for i in range(request.start_height, request.end_height + 1):
+                # TODO: address hint error and remove ignore
+                #       error: Argument 1 to "get_full_block_bytes" of "BlockStore" has incompatible type
+                #       "Optional[bytes32]"; expected "bytes32"  [arg-type]
                 block_bytes: Optional[bytes] = await self.full_node.block_store.get_full_block_bytes(
-                    self.full_node.blockchain.height_to_hash(uint32(i))
+                    self.full_node.blockchain.height_to_hash(uint32(i))  # type: ignore[arg-type]
                 )
                 if block_bytes is None:
                     reject = RejectBlocks(request.start_height, request.end_height)
@@ -426,14 +463,18 @@ class FullNodeAPI:
 
     @peer_required
     @api_request
+    @bytes_required
     async def respond_unfinished_block(
         self,
         respond_unfinished_block: full_node_protocol.RespondUnfinishedBlock,
         peer: ws.WSSkynetConnection,
+        respond_unfinished_block_bytes: bytes = b"",
     ) -> Optional[Message]:
         if self.full_node.sync_store.get_sync_mode():
             return None
-        await self.full_node.respond_unfinished_block(respond_unfinished_block, peer)
+        await self.full_node.respond_unfinished_block(
+            respond_unfinished_block, peer, block_bytes=respond_unfinished_block_bytes
+        )
         return None
 
     @api_request
@@ -712,7 +753,7 @@ class FullNodeAPI:
             block_generator: Optional[BlockGenerator] = None
             additions: Optional[List[Coin]] = []
             removals: Optional[List[Coin]] = []
-            async with self.full_node.blockchain.lock:
+            async with self.full_node._blockchain_lock_high_priority:
                 peak: Optional[BlockRecord] = self.full_node.blockchain.get_peak()
                 if peak is not None:
                     # Finds the last transaction block before this one
@@ -862,6 +903,9 @@ class FullNodeAPI:
                     timestamp = uint64(int(curr.timestamp + 1))
 
             self.log.info("Starting to make the unfinished block")
+            # TODO: address hint error and remove ignore
+            #       error: Argument 16 to "create_unfinished_block" has incompatible type "bytes"; expected "bytes32"
+            #       [arg-type]
             unfinished_block: UnfinishedBlock = create_unfinished_block(
                 self.full_node.constants,
                 total_iters_pos_slot,
@@ -878,7 +922,7 @@ class FullNodeAPI:
                 sp_vdfs,
                 timestamp,
                 self.full_node.blockchain,
-                b"",
+                b"",  # type: ignore[arg-type]
                 block_generator,
                 aggregate_signature,
                 additions,
@@ -897,17 +941,23 @@ class FullNodeAPI:
             if unfinished_block.is_transaction_block():
                 foliage_transaction_block_hash = unfinished_block.foliage.foliage_transaction_block_hash
             else:
-                foliage_transaction_block_hash = bytes([0] * 32)
+                foliage_transaction_block_hash = bytes32([0] * 32)
 
+            # TODO: address hint error and remove ignore
+            #       error: Argument 3 to "RequestSignedValues" has incompatible type "Optional[bytes32]"; expected
+            #       "bytes32"  [arg-type]
             message = farmer_protocol.RequestSignedValues(
                 quality_string,
                 foliage_sb_data_hash,
-                foliage_transaction_block_hash,
+                foliage_transaction_block_hash,  # type: ignore[arg-type]
             )
             await peer.send_message(make_msg(ProtocolMessageTypes.request_signed_values, message))
 
             # Adds backup in case the first one fails
             if unfinished_block.is_transaction_block() and unfinished_block.transactions_generator is not None:
+                # TODO: address hint error and remove ignore
+                #       error: Argument 16 to "create_unfinished_block" has incompatible type "bytes"; expected
+                #       "bytes32"  [arg-type]
                 unfinished_block_backup = create_unfinished_block(
                     self.full_node.constants,
                     total_iters_pos_slot,
@@ -924,7 +974,7 @@ class FullNodeAPI:
                     sp_vdfs,
                     timestamp,
                     self.full_node.blockchain,
-                    b"",
+                    b"",  # type: ignore[arg-type]
                     None,
                     G2Element(),
                     None,
@@ -994,10 +1044,13 @@ class FullNodeAPI:
                 self.full_node.full_node_store.add_candidate_block(
                     farmer_request.quality_string, height, unfinished_block, False
                 )
+                # TODO: address hint error and remove ignore
+                #       error: Argument 3 to "RequestSignedValues" has incompatible type "Optional[bytes32]"; expected
+                #       "bytes32"  [arg-type]
                 message = farmer_protocol.RequestSignedValues(
                     farmer_request.quality_string,
                     unfinished_block.foliage.foliage_block_data.get_hash(),
-                    unfinished_block.foliage.foliage_transaction_block_hash,
+                    unfinished_block.foliage.foliage_transaction_block_hash,  # type: ignore[arg-type]
                 )
                 await peer.send_message(make_msg(ProtocolMessageTypes.request_signed_values, message))
         return None
@@ -1077,7 +1130,10 @@ class FullNodeAPI:
 
     @api_request
     async def request_additions(self, request: wallet_protocol.RequestAdditions) -> Optional[Message]:
-        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(request.header_hash)
+        # TODO: address hint error and remove ignore
+        #       error: Argument 1 to "get_full_block" of "BlockStore" has incompatible type "Optional[bytes32]";
+        #       expected "bytes32"  [arg-type]
+        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(request.header_hash)  # type: ignore[arg-type]  # noqa: E501
 
         # We lock so that the coin store does not get modified
         if (
@@ -1085,7 +1141,10 @@ class FullNodeAPI:
             or block.is_transaction_block() is False
             or self.full_node.blockchain.height_to_hash(block.height) != request.header_hash
         ):
-            reject = wallet_protocol.RejectAdditionsRequest(request.height, request.header_hash)
+            # TODO: address hint error and remove ignore
+            #       error: Argument 2 to "RejectAdditionsRequest" has incompatible type "Optional[bytes32]"; expected
+            #       "bytes32"  [arg-type]
+            reject = wallet_protocol.RejectAdditionsRequest(request.height, request.header_hash)  # type: ignore[arg-type]  # noqa: E501
 
             msg = make_msg(ProtocolMessageTypes.reject_additions_request, reject)
             return msg
@@ -1205,16 +1264,35 @@ class FullNodeAPI:
     @api_request
     async def send_transaction(self, request: wallet_protocol.SendTransaction) -> Optional[Message]:
         spend_name = request.transaction.name()
-        status, error = await self.full_node.respond_transaction(request.transaction, spend_name)
-        error_name = error.name if error is not None else None
-        if status == MempoolInclusionStatus.SUCCESS:
-            response = wallet_protocol.TransactionAck(spend_name, uint8(status.value), error_name)
+
+        await self.full_node.transaction_queue.put(
+            (0, TransactionQueueEntry(request.transaction, None, spend_name, None, False))
+        )
+        # Waits for the transaction to go into the mempool, times out after 45 seconds.
+        status, error = None, None
+        for i in range(450):
+            await asyncio.sleep(0.1)
+            for potential_name, potential_status, potential_error in self.full_node.transaction_responses:
+                if spend_name == potential_name:
+                    status = potential_status
+                    error = potential_error
+                    break
+            if status is not None:
+                break
+        if status is None:
+            response = wallet_protocol.TransactionAck(spend_name, uint8(MempoolInclusionStatus.PENDING), None)
         else:
-            # If if failed/pending, but it previously succeeded (in mempool), this is idempotence, return SUCCESS
-            if self.full_node.mempool_manager.get_spendbundle(spend_name) is not None:
-                response = wallet_protocol.TransactionAck(spend_name, uint8(MempoolInclusionStatus.SUCCESS.value), None)
-            else:
+            error_name = error.name if error is not None else None
+            if status == MempoolInclusionStatus.SUCCESS:
                 response = wallet_protocol.TransactionAck(spend_name, uint8(status.value), error_name)
+            else:
+                # If if failed/pending, but it previously succeeded (in mempool), this is idempotence, return SUCCESS
+                if self.full_node.mempool_manager.get_spendbundle(spend_name) is not None:
+                    response = wallet_protocol.TransactionAck(
+                        spend_name, uint8(MempoolInclusionStatus.SUCCESS.value), None
+                    )
+                else:
+                    response = wallet_protocol.TransactionAck(spend_name, uint8(status.value), error_name)
         msg = make_msg(ProtocolMessageTypes.transaction_ack, response)
         return msg
 
@@ -1229,7 +1307,10 @@ class FullNodeAPI:
             return reject_msg
 
         header_hash = self.full_node.blockchain.height_to_hash(height)
-        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(header_hash)
+        # TODO: address hint error and remove ignore
+        #       error: Argument 1 to "get_full_block" of "BlockStore" has incompatible type "Optional[bytes32]";
+        #       expected "bytes32"  [arg-type]
+        block: Optional[FullBlock] = await self.full_node.block_store.get_full_block(header_hash)  # type: ignore[arg-type]  # noqa: E501
 
         if block is None or block.transactions_generator is None:
             return reject_msg
@@ -1264,7 +1345,10 @@ class FullNodeAPI:
                 return msg
             header_hashes.append(self.full_node.blockchain.height_to_hash(uint32(i)))
 
-        blocks: List[FullBlock] = await self.full_node.block_store.get_blocks_by_hash(header_hashes)
+        # TODO: address hint error and remove ignore
+        #       error: Argument 1 to "get_blocks_by_hash" of "BlockStore" has incompatible type
+        #       "List[Optional[bytes32]]"; expected "List[bytes32]"  [arg-type]
+        blocks: List[FullBlock] = await self.full_node.block_store.get_blocks_by_hash(header_hashes)  # type: ignore[arg-type]  # noqa: E501
         header_blocks = []
         for block in blocks:
             added_coins_records = await self.full_node.coin_store.get_coins_added_at_height(block.height)

@@ -44,11 +44,10 @@ jobs:
 
     - name: Create keychain for CI use
       run: |
-        security create-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
+        security create-keychain -p foo skynetchain
         security default-keychain -s skynetchain
-        security unlock-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
+        security unlock-keychain -p foo skynetchain
         security set-keychain-settings -t 7200 -u skynetchain
-
 
     - name: Get pip cache dir
       id: pip-cache
@@ -67,7 +66,7 @@ jobs:
     - name: Checkout test blocks and plots
       uses: actions/checkout@v2
       with:
-        repository: 'SkynetNetwork/test-cache'
+        repository: 'Skynet-Network/test-cache'
         path: '.skynet'
         ref: '0.27.0'
         fetch-depth: 1
@@ -85,7 +84,7 @@ jobs:
         BUILD_VDF_CLIENT: "N"
       run: |
         brew install boost
-        sh install.sh
+        sh install.sh -d
 
     - name: Install timelord
       run: |
@@ -93,15 +92,10 @@ jobs:
         sh install-timelord.sh
         ./vdf_bench square_asm 400000
 
-    - name: Install developer requirements
-      run: |
-        . ./activate
-        venv/bin/python -m pip install pytest pytest-asyncio pytest-xdist
-
     - name: Test core-full_node-full_sync code with pytest
       run: |
         . ./activate
-        ./venv/bin/py.test tests/core/full_node/full_sync/test_full_sync.py -s -v --durations 0 
+        ./venv/bin/py.test tests/core/full_node/full_sync/test_*.py -s -v --durations 0
 #
 # THIS FILE IS GENERATED. SEE https://github.com/SkynetNetwork/skynet-blockchain/tree/main/tests#readme
 #

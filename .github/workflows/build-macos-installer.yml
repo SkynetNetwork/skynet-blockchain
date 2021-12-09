@@ -35,6 +35,8 @@ jobs:
         fetch-depth: 0
         submodules: recursive
 
+    - uses: Skynet-Network/actions/git-ssh-to-https@main
+
     - name: Cleanup any leftovers that exist from previous runs
       run: bash build_scripts/clean-runner.sh || true
 
@@ -42,14 +44,6 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
-
-    - name: Create keychain for CI use
-      run: |
-        security create-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
-        security default-keychain -s skynetchain
-        security unlock-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
-        security set-keychain-settings -t 7200 -u skynetchain
-
 
     - name: Cache npm
       uses: actions/cache@v2.1.6
@@ -95,6 +89,27 @@ jobs:
         p12-file-base64: ${{ secrets.APPLE_DEV_ID_APP }}
         p12-password: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
 
+    # Get the most recent release from skynet-plotter-madmax
+    - uses: actions/github-script@v4
+      id: 'latest-madmax'
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        result-encoding: string
+        script: |
+          const releases = await github.repos.listReleases({
+            owner: 'Skynet-Network',
+            repo: 'skynet-plotter-madmax',
+          });
+          return releases.data[0].tag_name;
+
+    - name: Get latest madmax plotter
+      run: |
+        mkdir "$GITHUB_WORKSPACE/madmax"
+        wget -O "$GITHUB_WORKSPACE/madmax/skynet_plot" https://github.com/SkynetNetwork/skynet-plotter-madmax/releases/download/${{ steps.latest-madmax.outputs.result }}/skynet_plot-${{ steps.latest-madmax.outputs.result }}-macos-intel
+        wget -O "$GITHUB_WORKSPACE/madmax/skynet_plot_k34" https://github.com/SkynetNetwork/skynet-plotter-madmax/releases/download/${{ steps.latest-madmax.outputs.result }}/skynet_plot_k34-${{ steps.latest-madmax.outputs.result }}-macos-intel
+        chmod +x "$GITHUB_WORKSPACE/madmax/skynet_plot"
+        chmod +x "$GITHUB_WORKSPACE/madmax/skynet_plot_k34"
+
     - name: Run install script
       env:
         INSTALL_PYTHON_VERSION: ${{ matrix.python-version }}
@@ -102,10 +117,10 @@ jobs:
       run: |
         sh install.sh
 
-    - name: Setup Node 14.x
+    - name: Setup Node 16.x
       uses: actions/setup-node@v2.4.1
       with:
-        node-version: '14.x'
+        node-version: '16.x'
 
     - name: Build MacOS DMG in Catalina
       env:

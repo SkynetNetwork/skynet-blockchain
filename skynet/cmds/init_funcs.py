@@ -25,7 +25,7 @@ from skynet.util.config import (
 from skynet.util.ints import uint32
 from skynet.util.keychain import Keychain
 from skynet.util.path import mkdir
-from skynet.util.ssl import (
+from skynet.util.ssl_check import (
     DEFAULT_PERMISSIONS_CERT_FILE,
     DEFAULT_PERMISSIONS_KEY_FILE,
     RESTRICT_MASK_CERT_FILE,
@@ -34,6 +34,7 @@ from skynet.util.ssl import (
     fix_ssl,
 )
 from skynet.wallet.derive_keys import master_sk_to_pool_sk, master_sk_to_wallet_sk
+from skynet.cmds.configure import configure
 
 private_node_names = {"full_node", "wallet", "farmer", "harvester", "timelord", "daemon"}
 public_node_names = {"full_node", "wallet", "farmer", "introducer", "timelord"}
@@ -267,7 +268,7 @@ def copy_cert_files(cert_path: Path, new_path: Path):
         check_and_fix_permissions_for_ssl_file(new_path_child, RESTRICT_MASK_KEY_FILE, DEFAULT_PERMISSIONS_KEY_FILE)
 
 
-def init(create_certs: Optional[Path], root_path: Path, fix_ssl_permissions: bool = False):
+def init(create_certs: Optional[Path], root_path: Path, fix_ssl_permissions: bool = False, testnet: bool = False):
     if create_certs is not None:
         if root_path.exists():
             if os.path.isdir(create_certs):
@@ -283,13 +284,16 @@ def init(create_certs: Optional[Path], root_path: Path, fix_ssl_permissions: boo
         else:
             print(f"** {root_path} does not exist. Executing core init **")
             # sanity check here to prevent infinite recursion
-            if skynet_init(root_path, fix_ssl_permissions=fix_ssl_permissions) == 0 and root_path.exists():
+            if (
+                skynet_init(root_path, fix_ssl_permissions=fix_ssl_permissions, testnet=testnet) == 0
+                and root_path.exists()
+            ):
                 return init(create_certs, root_path, fix_ssl_permissions)
 
             print(f"** {root_path} was not created. Exiting **")
             return -1
     else:
-        return skynet_init(root_path, fix_ssl_permissions=fix_ssl_permissions)
+        return skynet_init(root_path, fix_ssl_permissions=fix_ssl_permissions, testnet=testnet)
 
 
 def skynet_version_number() -> Tuple[str, str, str, str]:
@@ -351,10 +355,13 @@ def skynet_full_version_str() -> str:
     return f"{major}.{minor}.{patch}{dev}"
 
 
-def skynet_init(root_path: Path, *, should_check_keys: bool = True, fix_ssl_permissions: bool = False):
+def skynet_init(
+    root_path: Path, *, should_check_keys: bool = True, fix_ssl_permissions: bool = False, testnet: bool = False
+):
     """
     Standard first run initialization or migration steps. Handles config creation,
     generation of SSL certs, and setting target addresses (via check_keys).
+
     should_check_keys can be set to False to avoid blocking when accessing a passphrase
     protected Keychain. When launching the daemon from the GUI, we want the GUI to
     handle unlocking the keychain.
@@ -370,6 +377,8 @@ def skynet_init(root_path: Path, *, should_check_keys: bool = True, fix_ssl_perm
     if root_path.is_dir() and Path(root_path / "config" / "config.yaml").exists():
         # This is reached if SKYNET_ROOT is set, or if user has run skynet init twice
         # before a new update.
+        if testnet:
+            configure(root_path, "", "", "", "", "", "", "", "", testnet="true", peer_connect_timeout="")
         if fix_ssl_permissions:
             fix_ssl(root_path)
         if should_check_keys:
@@ -378,6 +387,8 @@ def skynet_init(root_path: Path, *, should_check_keys: bool = True, fix_ssl_perm
         return -1
 
     create_default_skynet_config(root_path)
+    if testnet:
+        configure(root_path, "", "", "", "", "", "", "", "", testnet="true", peer_connect_timeout="")
     create_all_ssl(root_path)
     if fix_ssl_permissions:
         fix_ssl(root_path)

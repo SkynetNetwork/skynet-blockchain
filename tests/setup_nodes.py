@@ -268,7 +268,7 @@ async def setup_introducer(port):
 
 
 async def setup_vdf_client(port):
-    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1))
+    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1, bt.config.get("prefer_ipv6")))
 
     def stop():
         asyncio.create_task(kill_processes())
@@ -281,9 +281,9 @@ async def setup_vdf_client(port):
 
 
 async def setup_vdf_clients(port):
-    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1))
-    vdf_task_2 = asyncio.create_task(spawn_process(self_hostname, port, 2))
-    vdf_task_3 = asyncio.create_task(spawn_process(self_hostname, port, 3))
+    vdf_task_1 = asyncio.create_task(spawn_process(self_hostname, port, 1, bt.config.get("prefer_ipv6")))
+    vdf_task_2 = asyncio.create_task(spawn_process(self_hostname, port, 2, bt.config.get("prefer_ipv6")))
+    vdf_task_3 = asyncio.create_task(spawn_process(self_hostname, port, 3, bt.config.get("prefer_ipv6")))
 
     def stop():
         asyncio.create_task(kill_processes())
@@ -300,7 +300,7 @@ async def setup_timelord(port, full_node_port, sanitizer, consensus_constants: C
     config = b_tools.config["timelord"]
     config["port"] = port
     config["full_node_peer"]["port"] = full_node_port
-    config["sanitizer_mode"] = sanitizer
+    config["bluebox_mode"] = sanitizer
     config["fast_algorithm"] = False
     if sanitizer:
         config["vdf_server"]["port"] = 7999
@@ -482,7 +482,7 @@ async def setup_full_system(
             setup_introducer(21233),
             setup_harvester(21234, 21235, consensus_constants, b_tools),
             setup_farmer(21235, consensus_constants, b_tools, uint16(21237)),
-            setup_vdf_clients(8000),
+            setup_vdf_clients(9990),
             setup_timelord(21236, 21237, False, consensus_constants, b_tools),
             setup_full_node(
                 consensus_constants, "blockchain_test.db", 21237, b_tools, 21233, False, 10, True, connect_to_daemon

@@ -1,19 +1,4 @@
 #!/bin/bash
-# Execute this script from project root folder.
-echo "Clear all..."
-rm -rf ./build_scripts/build
-rm -rf ./build_scripts/dist
-rm -rf ./build_scripts/final_installer
-rm -rf ./skynet-blockchain-gui/build
-rm -rf ./skynet-blockchain-gui/daemon
-# rm -rf ./skynet-blockchain-gui/node_modules
-rm -rf ./skynet-blockchain-gui/Skynet-darwin-x64
-echo "...OK"
-
-. ./activate
-python -m pip install --upgrade pip
-pip install wheel pep517
-cd build_scripts
 
 set -euo pipefail
 
@@ -31,9 +16,13 @@ echo "Skynet Installer Version is: $SKYNET_INSTALLER_VERSION"
 
 echo "Installing npm and electron packagers"
 npm install electron-installer-dmg -g
-npm install electron-packager -g
-npm install electron/electron-osx-sign -g
+# Pinning electron-packager and electron-osx-sign to known working versions
+# Current packager uses an old version of osx-sign, so if we install the newer sign package
+# things break
+npm install electron-packager@15.4.0 -g
+npm install electron-osx-sign@v0.5.0 -g
 npm install notarize-cli -g
+npm install lerna -g
 
 echo "Create dist/"
 sudo rm -rf dist
@@ -48,14 +37,15 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	echo >&2 "pyinstaller failed!"
 	exit $LAST_EXIT_CODE
 fi
-cp -r dist/daemon ../skynet-blockchain-gui
+cp -r dist/daemon ../skynet-blockchain-gui/packages/gui
 cd .. || exit
 cd skynet-blockchain-gui || exit
 
 echo "npm build"
+lerna clean -y
 npm install
-npm audit fix
-./node_modules/.bin/electron-rebuild -f -w node-pty
+# Audit fix does not currently work with Lerna. See https://github.com/lerna/lerna/issues/1663
+# npm audit fix
 npm run build
 LAST_EXIT_CODE=$?
 if [ "$LAST_EXIT_CODE" -ne 0 ]; then
@@ -63,18 +53,28 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
+# Change to the gui package
+cd packages/gui || exit
+
+# sets the version for skynet-blockchain in package.json
+brew install jq
+cp package.json package.json.orig
+jq --arg VER "$SKYNET_INSTALLER_VERSION" '.version=$VER' package.json > temp.json && mv temp.json package.json
+
 electron-packager . Skynet --asar.unpack="**/daemon/**" --platform=darwin \
 --icon=src/assets/img/Skynet.icns --overwrite --app-bundle-id=net.skynet.blockchain \
 --appVersion=$SKYNET_INSTALLER_VERSION
 LAST_EXIT_CODE=$?
+
+# reset the package.json to the original
+mv package.json.orig package.json
+
 if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	echo >&2 "electron-packager failed!"
 	exit $LAST_EXIT_CODE
 fi
 
-set +u
-
-if [ "$NOTARIZE" ]; then
+if [ "$NOTARIZE" == true ]; then
   electron-osx-sign Skynet-darwin-x64/Skynet.app --platform=darwin \
   --hardened-runtime=true --provisioning-profile=skynetblockchain.provisionprofile \
   --entitlements=entitlements.mac.plist --entitlements-inherit=entitlements.mac.plist \
@@ -86,8 +86,8 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
-mv Skynet-darwin-x64 ../build_scripts/dist/
-cd ../build_scripts || exit
+mv Skynet-darwin-x64 ../../../build_scripts/dist/
+cd ../../../build_scripts || exit
 
 DMG_NAME="Skynet-$SKYNET_INSTALLER_VERSION.dmg"
 echo "Create $DMG_NAME"
@@ -100,7 +100,7 @@ if [ "$LAST_EXIT_CODE" -ne 0 ]; then
 	exit $LAST_EXIT_CODE
 fi
 
-if [ "$NOTARIZE" ]; then
+if [ "$NOTARIZE" == true ]; then
 	echo "Notarize $DMG_NAME on ci"
 	cd final_installer || exit
   notarize-cli --file=$DMG_NAME --bundle-id net.skynet.blockchain \
@@ -110,8 +110,6 @@ else
 	echo "Not on ci or no secrets so skipping Notarize"
 fi
 
-cd ..
-deactivate
 # Notes on how to manually notarize
 #
 # Ask for username and password. password should be an app specific password.

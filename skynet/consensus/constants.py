@@ -7,6 +7,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
+
 @dataclasses.dataclass(frozen=True)
 class ConsensusConstants:
     SLOT_BLOCKS_TARGET: uint32  # How many blocks to target per sub-slot
@@ -34,7 +35,7 @@ class ConsensusConstants:
     MAX_FUTURE_TIME: int  # The next block can have a timestamp of at most these many seconds more
     NUMBER_OF_TIMESTAMPS: int  # Than the average of the last NUMBER_OF_TIMESTAMPS blocks
     # Used as the initial cc rc challenges, as well as first block back pointers, and first SES back pointer
-    # We override this value based on the chain being run (testnet1, testnet1, mainnet, etc)
+    # We override this value based on the chain being run (testnet0, testnet1, mainnet, etc)
     GENESIS_CHALLENGE: bytes32
     # Forks of skynet should change this value to provide replay attack protection
     AGG_SIG_ME_ADDITIONAL_DATA: bytes
@@ -68,7 +69,7 @@ class ConsensusConstants:
         """
         Overrides str (hex) values with bytes.
         """
-        
+
         filtered_changes = {}
         for k, v in changes.items():
             if not hasattr(self, k):

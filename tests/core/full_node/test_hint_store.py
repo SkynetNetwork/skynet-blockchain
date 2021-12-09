@@ -9,7 +9,7 @@ from skynet.types.blockchain_format.coin import Coin
 from skynet.types.condition_opcodes import ConditionOpcode
 from skynet.types.condition_with_args import ConditionWithArgs
 from skynet.types.spend_bundle import SpendBundle
-from tests.core.full_node.test_coin_store import DBConnection
+from tests.util.db_connection import DBConnection
 from tests.wallet_tools import WalletTool
 from tests.setup_nodes import bt
 
@@ -25,8 +25,9 @@ log = logging.getLogger(__name__)
 
 class TestHintStore:
     @pytest.mark.asyncio
-    async def test_basic_store(self):
-        async with DBConnection() as db_wrapper:
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_basic_store(self, db_version):
+        async with DBConnection(db_version) as db_wrapper:
             hint_store = await HintStore.create(db_wrapper)
             hint_0 = 32 * b"\0"
             hint_1 = 32 * b"\1"
@@ -51,7 +52,7 @@ class TestHintStore:
             assert coins_for_non_hint == []
 
     @pytest.mark.asyncio
-    async def test_hints_in_blockchain(self, empty_blockchain):
+    async def test_hints_in_blockchain(self, empty_blockchain):  # noqa: F811
         blockchain: Blockchain = empty_blockchain
 
         blocks = bt.get_consecutive_blocks(

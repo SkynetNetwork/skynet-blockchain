@@ -27,6 +27,7 @@ from skynet.types.condition_opcodes import ConditionOpcode
 from skynet.types.condition_with_args import ConditionWithArgs
 from skynet.types.end_of_slot_bundle import EndOfSubSlotBundle
 from skynet.types.full_block import FullBlock
+from skynet.types.generator_types import BlockGenerator
 from skynet.types.spend_bundle import SpendBundle
 from skynet.types.unfinished_block import UnfinishedBlock
 from tests.block_tools import create_block_tools_async, get_vdf_info_and_proof
@@ -36,13 +37,8 @@ from skynet.util.ints import uint8, uint64, uint32
 from skynet.util.merkle_set import MerkleSet
 from skynet.util.recursive_replace import recursive_replace
 from tests.wallet_tools import WalletTool
-from tests.core.fixtures import default_400_blocks  # noqa: F401; noqa: F401
-from tests.core.fixtures import default_1000_blocks  # noqa: F401
-from tests.core.fixtures import default_10000_blocks  # noqa: F401
-from tests.core.fixtures import default_10000_blocks_compact  # noqa: F401
-from tests.core.fixtures import empty_blockchain  # noqa: F401
-from tests.core.fixtures import create_blockchain
 from tests.setup_nodes import bt, test_constants
+from tests.util.blockchain import create_blockchain
 from tests.util.keyring import TempKeyring
 from skynet.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     DEFAULT_HIDDEN_PUZZLE_HASH,
@@ -216,7 +212,13 @@ class TestBlockHeaderValidation:
             block.transactions_generator,
             [],
         )
-        validate_res = await blockchain.validate_unfinished_block(unf, False)
+        npc_result = None
+        if unf.transactions_generator is not None:
+            block_generator: BlockGenerator = await blockchain.get_block_generator(unf)
+            block_bytes = bytes(unf)
+            npc_result = await blockchain.run_generator(block_bytes, block_generator)
+
+        validate_res = await blockchain.validate_unfinished_block(unf, npc_result, False)
         err = validate_res.error
         assert err is None
         result, err, _, _ = await blockchain.receive_block(block)
@@ -233,7 +235,12 @@ class TestBlockHeaderValidation:
             block.transactions_generator,
             [],
         )
-        validate_res = await blockchain.validate_unfinished_block(unf, False)
+        npc_result = None
+        if unf.transactions_generator is not None:
+            block_generator: BlockGenerator = await blockchain.get_block_generator(unf)
+            block_bytes = bytes(unf)
+            npc_result = await blockchain.run_generator(block_bytes, block_generator)
+        validate_res = await blockchain.validate_unfinished_block(unf, npc_result, False)
         assert validate_res.error is None
 
     @pytest.mark.asyncio
@@ -316,7 +323,14 @@ class TestBlockHeaderValidation:
                     block.transactions_generator,
                     [],
                 )
-                validate_res = await blockchain.validate_unfinished_block(unf, skip_overflow_ss_validation=True)
+                npc_result = None
+                if block.transactions_generator is not None:
+                    block_generator: BlockGenerator = await blockchain.get_block_generator(unf)
+                    block_bytes = bytes(unf)
+                    npc_result = await blockchain.run_generator(block_bytes, block_generator)
+                validate_res = await blockchain.validate_unfinished_block(
+                    unf, npc_result, skip_overflow_ss_validation=True
+                )
                 assert validate_res.error is None
                 return None
 
@@ -464,12 +478,12 @@ class TestBlockHeaderValidation:
         assert result == ReceiveBlockResult.INVALID_BLOCK
         assert err == Err.SHOULD_NOT_HAVE_ICC
 
-    async def do_test_invalid_icc_sub_slot_vdf(self, keychain):
+    async def do_test_invalid_icc_sub_slot_vdf(self, keychain, db_version):
         bt_high_iters = await create_block_tools_async(
             constants=test_constants.replace(SUB_SLOT_ITERS_STARTING=(2 ** 12), DIFFICULTY_STARTING=(2 ** 14)),
             keychain=keychain,
         )
-        bc1, connection, db_path = await create_blockchain(bt_high_iters.constants)
+        bc1, connection, db_path = await create_blockchain(bt_high_iters.constants, db_version)
         blocks = bt_high_iters.get_consecutive_blocks(10)
         for block in blocks:
             if len(block.finished_sub_slots) > 0 and block.finished_sub_slots[-1].infused_challenge_chain is not None:
@@ -552,9 +566,10 @@ class TestBlockHeaderValidation:
         db_path.unlink()
 
     @pytest.mark.asyncio
-    async def test_invalid_icc_sub_slot_vdf(self):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_invalid_icc_sub_slot_vdf(self, db_version):
         with TempKeyring() as keychain:
-            await self.do_test_invalid_icc_sub_slot_vdf(keychain)
+            await self.do_test_invalid_icc_sub_slot_vdf(keychain, db_version)
 
     @pytest.mark.asyncio
     async def test_invalid_icc_into_cc(self, empty_blockchain):
@@ -1883,34 +1898,6 @@ class TestBodyValidation:
         assert err == Err.INVALID_REWARD_COINS
 
     @pytest.mark.asyncio
-    async def test_initial_freeze(self, empty_blockchain):
-        # 6
-        b = empty_blockchain
-        blocks = bt.get_consecutive_blocks(
-            3,
-            guarantee_transaction_block=True,
-            pool_reward_puzzle_hash=bt.pool_ph,
-            farmer_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
-            genesis_timestamp=time.time() - 1000,
-        )
-        assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
-        assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
-        assert (await b.receive_block(blocks[2]))[0] == ReceiveBlockResult.NEW_PEAK
-        wt: WalletTool = bt.get_pool_wallet_tool()
-        tx: SpendBundle = wt.generate_signed_transaction(
-            10, wt.get_new_puzzlehash(), list(blocks[2].get_included_reward_coins())[0]
-        )
-        blocks = bt.get_consecutive_blocks(
-            1,
-            block_list_input=blocks,
-            guarantee_transaction_block=True,
-            transaction_data=tx,
-        )
-        err = (await b.receive_block(blocks[-1]))[1]
-        assert err == Err.INITIAL_TRANSACTION_FREEZE
-
-    @pytest.mark.asyncio
     async def test_invalid_transactions_generator_hash(self, empty_blockchain):
         # 7
         b = empty_blockchain
@@ -1940,7 +1927,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[2]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[3]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -1978,7 +1964,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2067,7 +2052,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2103,7 +2087,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2176,7 +2159,8 @@ class TestBodyValidation:
         assert err is None
 
     @pytest.mark.asyncio
-    async def test_max_coin_amount(self):
+    @pytest.mark.parametrize("db_version", [1, 2])
+    async def test_max_coin_amount(self, db_version):
         # 10
         # TODO: fix, this is not reaching validation. Because we can't create a block with such amounts due to uint64
         # limit in Coin
@@ -2186,7 +2170,7 @@ class TestBodyValidation:
         #     new_test_constants = test_constants.replace(
         #         **{"GENESIS_PRE_FARM_POOL_PUZZLE_HASH": bt.pool_ph, "GENESIS_PRE_FARM_FARMER_PUZZLE_HASH": bt.pool_ph}
         #     )
-        #     b, connection, db_path = await create_blockchain(new_test_constants)
+        #     b, connection, db_path = await create_blockchain(new_test_constants, db_version)
         #     bt_2 = await create_block_tools_async(constants=new_test_constants, keychain=keychain)
         #     bt_2.constants = bt_2.constants.replace(
         #         **{"GENESIS_PRE_FARM_POOL_PUZZLE_HASH": bt.pool_ph, "GENESIS_PRE_FARM_FARMER_PUZZLE_HASH": bt.pool_ph}
@@ -2233,7 +2217,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2285,7 +2268,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2321,7 +2303,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2352,7 +2333,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2382,7 +2362,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2417,7 +2396,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2548,7 +2526,6 @@ class TestBodyValidation:
             guarantee_transaction_block=True,
             farmer_reward_puzzle_hash=bt.pool_ph,
             pool_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK
@@ -2751,7 +2728,6 @@ class TestReorgs:
             guarantee_transaction_block=True,
             pool_reward_puzzle_hash=bt.pool_ph,
             farmer_reward_puzzle_hash=bt.pool_ph,
-            timelord_reward_puzzle_hash=bt.pool_ph,
         )
         assert (await b.receive_block(blocks[0]))[0] == ReceiveBlockResult.NEW_PEAK
         assert (await b.receive_block(blocks[1]))[0] == ReceiveBlockResult.NEW_PEAK

@@ -42,14 +42,6 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Create keychain for CI use
-      run: |
-        security create-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
-        security default-keychain -s skynetchain
-        security unlock-keychain -p ${{ secrets.MAC_CI_KEYCHAIN_PASSWORD }} skynetchain
-        security set-keychain-settings -t 7200 -u skynetchain
-
-
     - name: Cache npm
       uses: actions/cache@v2.1.6
       with:
@@ -71,14 +63,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
-# Omitted checking out blocks and plots repo SkynetNetwork/test-cache
-
-    - name: Link home directory
-      run: |
-        cd $HOME
-        ln -s $GITHUB_WORKSPACE/.skynet
-        echo "$HOME/.skynet"
-        ls -al $HOME/.skynet
+# Omitted checking out blocks and plots repo Skynet-Network/test-cache
 
     - name: Install ubuntu dependencies
       run: |
@@ -91,19 +76,14 @@ jobs:
       env:
         INSTALL_PYTHON_VERSION: ${{ matrix.python-version }}
       run: |
-        sh install.sh
+        sh install.sh -d
 
 # Omitted installing Timelord
-
-    - name: Install developer requirements
-      run: |
-        . ./activate
-        venv/bin/python -m pip install pytest pytest-asyncio pytest-xdist pytest-monitor
 
     - name: Test clvm code with pytest
       run: |
         . ./activate
-        ./venv/bin/py.test tests/clvm/test_skynetlisp_deserialization.py tests/clvm/test_clvm_compilation.py tests/clvm/test_puzzles.py tests/clvm/test_serialized_program.py tests/clvm/test_singletons.py tests/clvm/test_spend_sim.py -s -v --durations 0 -n auto
+        ./venv/bin/py.test tests/clvm/test_*.py -s -v --durations 0 -n auto
 
 
 #
